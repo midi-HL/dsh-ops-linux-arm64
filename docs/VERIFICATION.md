@@ -159,7 +159,26 @@ bash-run        -> exitCode 0, stdout "aarch64\n2\n"
 | `ops_batch` 在普通会话内直接调用 | 需 ptc-only 呈现 | 只在 `tools mode: "ptc"` 且 DSH 处于 ptc-only 时发布。worker 层与 PTC 呈现层均已单独验证 |
 | 真实 LLM 端到端 | 未做 | 测试机 `127.0.0.1:8765` 转发端当时 down，`dsh headless` 报 `MISSING_CREDENTIAL`。属既有环境状态，与本改动无关 |
 
-## 7. 复现方法
+## 7. 四个目标同时编译（run `40491361545`）
+
+一次 `workflow_dispatch`，4 个 job 全部 success：
+
+| 目标 | triple | 大小 | sha256 | 格式 |
+|---|---|---|---|---|
+| `win32-x64` | `x86_64-pc-windows-msvc` | 3,855,872 | `5d0805c3c4885c7ae82accfc4725cf09c4e78b96507a5e68f189721fee40ea48` | PE |
+| `linux-x64` | `x86_64-unknown-linux-gnu` | 5,264,688 | `3b781969c9f5a8e814a736702a223178999969821c0cd449613185ff698c5ec0` | ELF x86-64 (e_machine=62) |
+| `linux-arm64` | `aarch64-unknown-linux-gnu` | 3,569,560 | `bf30ef79b5b921a659c0f04d7b54a0344ed2268dd1a1a9a5faea284042cbb9ef` | ELF aarch64 (e_machine=183) |
+| `darwin-arm64` | `aarch64-apple-darwin` | 4,236,288 | `241dfe16a3f38c4d2c4fc9cb17b73469b9d445714bf3c966fb42f0560450cce4` | Mach-O arm64 |
+
+两个结论：
+
+1. **`linux-arm64` 的 sha256 与本仓库 `prebuilt/` 里的产物完全一致** —— 说明从源码到
+   二进制的链路可复现，预编译产物不是黑盒。
+2. **`linux-x64` 的 sha256 与上游 npm 包 `runtime/linux-x64/provenance.json` 记录的值
+   完全一致**（`3b781969c9f5a8e814a736702a223178999969821c0cd449613185ff698c5ec0`）——
+   说明这个补丁**没有改变原项目在已有平台上的产出**，一个字节都没动。
+
+## 8. 复现方法
 
 ```bash
 gh workflow run build-all-targets.yml
