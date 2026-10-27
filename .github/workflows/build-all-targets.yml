@@ -1,0 +1,106 @@
+name: Build all targets
+
+# Builds the native worker for every declared target in one run, so a single
+# dispatch answers "does this source still compile for all four platforms?".
+#
+# Targets come from PLATFORMS in src/ptc/runtime.ts, which after the local
+# change is: win32-x64, linux-x64, linux-arm64, darwin-arm64.
+#
+# This is the verification workflow. Release publishing stays in release.yml.
+
+on:
+  workflow_dispatch:
+    inputs:
+      rust_version:
+        description: Rust toolchain version
+        required: false
+        default: '1.97.1'
+  push:
+    branches: [main]
+    paths:
+      - 'native/**'
+      - 'src/ptc/runtime.ts'
+      - '.github/workflows/build-all-targets.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    name: ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: windows-latest, target: win32-x64,          triple: x86_64-pc-windows-msvc }
+          - { runner: ubuntu-24.04,  target: linux-x64,           triple: x86_64-unknown-linux-gnu }
+          - { runner: ubuntu-24.04,  target: linux-arm64,         triple: aarch64-unknown-linux-gnu, zigbuild: true }
+          - { runner: macos-latest,  target: darwin-arm64,        triple: aarch64-apple-darwin }
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env:
+      CARGO_BUILD_JOBS: '3'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - uses: actions/setup-python@v5
+        if: matrix.zigbuild
+        with:
+          python-version: '3.12'
+
+      - name: Set up pinned Rust
+        shell: bash
+        run: |
+          rustup toolchain install "${{ inputs.rust_version || '1.97.1' }}" --profile minimal
+          rustup default "${{ inputs.rust_version || '1.97.1' }}"
+          rustup target add "${{ matrix.triple }}"
+
+      - name: Install zig (aarch64 Linux only)
+        if: matrix.zigbuild
+        run: |
+          python -m pip install --disable-pip-version-check 'ziglang==0.13.0' 'cargo-zigbuild==0.19.7'
+
+      - name: Install locked dependencies
+        run: npm ci --ignore-scripts --registry=https://registry.npmjs.org
+
+      - name: Build the plugin JS
+        run: npm run build
+
+      - name: Build the native worker
+        shell: bash
+        run: |
+          if [ "${{ matrix.zigbuild }}" = "true" ]; then
+            cargo zigbuild --release --locked --manifest-path native/Cargo.toml --target ${{ matrix.triple }}
+          else
+            cargo build --release --locked --manifest-path native/Cargo.toml --target ${{ matrix.triple }}
+          fi
+
+      - name: Stage and verify the runtime
+        shell: bash
+        run: |
+          node bin/native-runtime.mjs stage --platform ${{ matrix.target }} --input native/target/${{ matrix.triple }}/release
+          node bin/native-runtime.mjs check --platform ${{ matrix.target }}
+
+      - name: Record the digest
+        shell: bash
+        run: |
+          {
+            echo "### ${{ matrix.target }}"
+            echo '```'
+            echo "triple:  ${{ matrix.triple }}"
+            echo "rustc:   $(rustc -V)"
+            echo "size:    $(stat -c %s runtime/${{ matrix.target }}/dsh-ops-worker* 2>/dev/null || stat -f %z runtime/${{ matrix.target }}/dsh-ops-worker*) bytes"
+            echo "sha256:  $(sha256sum runtime/${{ matrix.target }}/dsh-ops-worker* 2>/dev/null | cut -d' ' -f1 || shasum -a 256 runtime/${{ matrix.target }}/dsh-ops-worker* | cut -d' ' -f1)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-${{ matrix.target }}
+          path: runtime/${{ matrix.target }}/
+          if-no-files-found: error
+          retention-days: 14
