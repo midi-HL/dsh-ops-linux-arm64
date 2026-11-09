@@ -1,11 +1,14 @@
 /** Resolve and confine every invocation using the current session authority. */
 import path from 'node:path'
-import type { ConfinedArgv } from '@deepseek-ai/dsh-sandbox'
+import { sameAuthority } from '../authority-paths.js'
+import type { ConfinedArgv } from '../adapter/dsh/types.js'
 import type { ShellContext, ShellCall, ShellPolicy, ExecutionOptions, ShellExecution, ShellResult } from './types.js'
 import { bashToolDefinition, withBashStatus } from './tool.js'
 import { confinedBash } from '../bash-ipc.js'
+import { executorUnavailableMessage } from '../bash-runtime-failure.js'
 import { prepareWorkspace } from '../workspace-preparation.js'
 import { executionRestriction } from '../permissions.js'
+import { isNiubashExecutable, prepareNiubash, disposeNiubash } from '../niubash/runtime.js'
 
 export function startSessionBash({ ctx, bash, active }: { ctx: ShellContext; bash: { file: string; source: string }; active(): boolean },
   args: Record<string, unknown>, exec: ShellCall, standing: ShellPolicy, policy: ShellPolicy, dshEnv: NodeJS.ProcessEnv, options: ExecutionOptions): ShellExecution {
@@ -13,21 +16,34 @@ export function startSessionBash({ ctx, bash, active }: { ctx: ShellContext; bas
   const session = exec.agent.session
   const assertAuthority = () => {
     const current = ctx.get('sandboxPolicy')?.resolve({ session })
-    if (!active() || current?.mode !== standing.mode || current?.workspaceRoot !== standing.workspaceRoot) {
+    if (!active() || !current || !sameAuthority(current, standing)) {
       throw new Error('AUTHORITY_CHANGED: session authority changed before execution; no command executed. Read the current policy before another call.')
     }
   }
   assertAuthority()
   if (!path.isAbsolute(bash.file)) throw new Error('EXECUTOR_UNAVAILABLE: Bash requires a resolved absolute executable path; configure an absolute bashPath. No command executed.')
-  let runtime: { file: string; env?: NodeJS.ProcessEnv }
-  try { runtime = policy.mode === 'danger-full-access' ? { file: bash.file } : confinedBash(bash.file, { source: bash.source }) }
-  catch { throw new Error('EXECUTOR_UNAVAILABLE: the restricted Bash runtime is unavailable or incompatible; this is not a user authorization denial. Restore the verified pinned Bash payload and IPC runtime; changing the DSH selector is not a repair. Do not retry or bypass confinement.') }
+  const native = process.platform === 'win32' && isNiubashExecutable(bash.file)
+  let runtime: { file: string; env?: NodeJS.ProcessEnv; verify?(): Promise<void>; dispose?(): Promise<void> } = { file: bash.file }
+  let preparation: Promise<void> = Promise.resolve()
+  const env = { ...dshEnv }
   let confinement: ConfinedArgv | undefined
-  const definition = bashToolDefinition({ file: runtime.file, source: bash.source,
-    env: { ...runtime.env, ...dshEnv }, subprocess: ctx.get('subprocess'),
+  const definition = bashToolDefinition({ file: bash.file, source: bash.source,
+    env, subprocess: ctx.get('subprocess'),
     prepareArgv: async (argv: string[], signal: AbortSignal) => {
       signal.throwIfAborted()
       assertAuthority()
+      preparation = (async () => {
+        try {
+          runtime = native ? await prepareNiubash(bash.file, dshEnv.PATH ?? dshEnv.Path ?? process.env.PATH, signal,
+            { workspaceRoot: typeof policy.workspaceRoot === 'string' ? policy.workspaceRoot : undefined })
+            : policy.mode === 'danger-full-access' ? { file: bash.file } : confinedBash(bash.file, { source: bash.source })
+          if (native) for (const key of Object.keys(env)) if (['PATH', 'NIU_ROOT', 'WINUXCMD_PATH', 'NIU_SKIP_WINUXCMD_ACTIVATION'].includes(key.toUpperCase())) delete env[key]
+          Object.assign(env, native ? runtime.env : { ...runtime.env, ...dshEnv })
+          argv[0] = runtime.file
+        } catch (error) { throw new Error(executorUnavailableMessage(error)) }
+      })()
+      await preparation
+      signal.throwIfAborted()
       await prepareWorkspace(policy)
       signal.throwIfAborted()
       if (policy.mode !== 'danger-full-access') {
@@ -36,6 +52,10 @@ export function startSessionBash({ ctx, bash, active }: { ctx: ShellContext; bas
         confinement = await sandbox.confine(argv, { ...policy, mode: policy.mode }, signal)
         if (!['full', 'partial'].includes(confinement?.enforcement) || !confinement.argv?.length) throw new Error('SANDBOX_UNAVAILABLE: invalid confinement result; no command executed.')
       }
+      signal.throwIfAborted()
+      assertAuthority()
+      // Recheck after asynchronous confinement/preparation, immediately before host spawn.
+      await runtime.verify?.()
       signal.throwIfAborted()
       assertAuthority()
       return confinement?.argv ?? argv
@@ -56,5 +76,18 @@ export function startSessionBash({ ctx, bash, active }: { ctx: ShellContext; bas
       })
     },
   })
-  return definition.start(args, exec, options)
+  try {
+    const execution = definition.start(args, exec, options)
+    const settled = execution.result().finally(async () => {
+      // The executor can stop racing a nonresponsive provider; staging must finish stopping
+      // before disposal, so no asynchronous writer can recreate a deleted tree.
+      await preparation.catch(() => undefined)
+      await disposeNiubash(runtime.dispose, message => ctx.logger?.warn?.(message))
+    })
+    return { get status() { return execution.status }, get started() { return execution.started },
+      observed: execution.observed, kill: reason => execution.kill(reason),
+      result: () => settled, done: settled.then(() => undefined, () => undefined),
+      get exitCode() { return execution.exitCode }, get signal() { return execution.signal },
+      get sandbox() { return execution.sandbox } }
+  } catch (error) { void runtime.dispose?.().catch(cleanup => ctx.logger?.warn?.(`Niubash cleanup failed: ${cleanup}`)); throw error }
 }

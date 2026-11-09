@@ -1,8 +1,12 @@
 /** Real pinned settings/profile writer: persistence, validation and component reload. */
 import fs from 'node:fs'
 import path from 'node:path'
+import { Config as MergedConfig } from '../lib/settings/merged.js'
+import { executorOps } from '../lib/client/row-schema.js'
 import { parse } from 'yaml'
 import { profileFixture } from './lib/settings-profile.mjs'
+// These suites exercise the pre-merge component modules directly.
+process.env.DSH_OPS_LEGACY_ROWS = '1'
 import { createScope } from '@deepseek-ai/dsh-scope'
 import * as Hiding from '../lib/components/hide-official/index.js'
 import { Config as DiscoveryConfig } from '../lib/components/discovery/index.js'
@@ -65,12 +69,14 @@ await test('real discovery form validates pool/always-loaded atomically and relo
   }, { allowedTools: ['glob', 'grep'], alwaysLoaded: [], binaryPath: '/preserved/worker' })
   try {
     const before = snapshot(), count = mounts
-    assert.deepEqual(Object.keys(before.value).sort(), ['allowedTools', 'alwaysLoaded', 'enabled', 'maxResults'])
-    await mutate([set('allowedTools', ['glob']), set('alwaysLoaded', ['glob'])], before.revision)
+    assert.deepEqual(Object.keys(before.value).sort(), ['allowedTools', 'alwaysLoaded', 'binaryPath', 'denyCredentialReads', 'enabled', 'maxResults', 'required'])
+    await mutate([set('allowedTools', ['glob']), set('alwaysLoaded', ['glob']), set('required', true), set('denyCredentialReads', false)], before.revision)
     assert.deepEqual(observed.allowedTools, ['glob'])
     assert.deepEqual(observed.alwaysLoaded, ['glob'])
     assert.equal(mounts, count + 1)
     assert.equal(observed.binaryPath, '/preserved/worker')
+    assert.equal(observed.required, true)
+    assert.equal(observed.denyCredentialReads, false)
     const saved = fs.readFileSync(patchPath, 'utf8'), current = snapshot()
     await assert.rejects(mutate([set('alwaysLoaded', ['grep'])], current.revision), /must be in allowedTools/)
     await assert.rejects(mutate([set('allowedTools', ['pdf'])], current.revision), /unavailable capability/)
@@ -93,6 +99,9 @@ await test('real shell form persists executor selection without erasing ordinary
     assert.equal(observed.publishBashTool, false)
     assert.equal(observed.shellPolicy, 'deny-host-shell')
     assert.equal(observed.allowSystemShellFallback, false)
+    await mutate([set('allowSystemShellFallback', true), set('extraGuidance', 'Use the configured executor.')], snapshot().revision)
+    assert.equal(observed.allowSystemShellFallback, true)
+    assert.equal(observed.extraGuidance, 'Use the configured executor.')
     const saved = fs.readFileSync(patchPath, 'utf8')
     await assert.rejects(mutate([set('bashPath', '')], snapshot().revision), /non-empty string/)
     assert.equal(fs.readFileSync(patchPath, 'utf8'), saved)
@@ -158,4 +167,27 @@ await test('real Cordis adapters preserve legacy null file/root/shell configurat
     } finally { await shutdown(ctx) }
   }
 })
+await test('merged row persists and clears the Git Bash selection through the real host writer', async () => {
+  let observed
+  const { ctx, snapshot, mutate, patchPath } = await profileFixture('ops-merged-executor', {
+    Config: MergedConfig, apply(_ctx, config) { observed = config },
+  }, { standard: { enabled: true, hidePwsh: true }, global: { bash: true } })
+  try {
+    const selected = path.join(TEST_HOME, 'selected', 'bash.exe')
+    await mutate(executorOps(snapshot().value, { clear: false, file: selected }), snapshot().revision)
+    await ctx.loader.await()
+    for (const mode of ['minimal', 'standard', 'ptc', 'cordis']) {
+      assert.equal(observed[mode].bashPath, selected)
+      assert.equal(snapshot().value[mode].bashPath, selected)
+    }
+    assert.match(fs.readFileSync(patchPath, 'utf8'), /bashPath:/)
+    assert.equal(observed.standard.hidePwsh, true)
+    await mutate(executorOps(snapshot().value, { clear: true }), snapshot().revision)
+    await ctx.loader.await()
+    for (const mode of ['minimal', 'standard', 'ptc', 'cordis']) assert.equal(observed[mode].bashPath, undefined)
+    assert.doesNotMatch(fs.readFileSync(patchPath, 'utf8'), /bashPath:/)
+    assert.equal(observed.standard.hidePwsh, true)
+  } finally { await shutdown(ctx) }
+})
+
 report('settings-host')

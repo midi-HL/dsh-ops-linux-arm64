@@ -31,6 +31,8 @@ There is no exit code for "green with a surprise in it" — that is `1`.
 
 ## The pull request run (CI, not this host)
 
+Feature-branch targets also run CI. Applying and proving repository enforcement is a separate [administrator task](required-ci-admin.md); a local gate never configures GitHub rulesets.
+
 Every pull request must show one `Cross-platform validation` run triggered by its own
 `pull_request` event, and paste the `CI required` run URL into the PR template. A local
 `verify-gate` run — however green — is not that run: it proves the checkout, not the merge
@@ -67,18 +69,20 @@ table (`tools-trial-report.md`). Tools the build does not publish, and published
 scenario yet, are reported as `skipped` with the reason, never silently.
 
 It is not a suite on purpose: `test/*.test.mjs` is the inventory the gate asserts was collected, and
-this trial is not a gate. CI runs it in its own `tools-trial` job with `continue-on-error`, so a tool
-that breaks is visible without blocking a merge.
+this trial is not a suite. It is a gate: CI runs it in its own `tools-trial` job, and a published tool
+that breaks blocks the merge until it is fixed or reverted.
 
 ## Expected numbers
 
 | Host | Suites | Skipped, and why |
 | --- | --- | --- |
-| `linux-x64`, `darwin-arm64` | all of `test/*.test.mjs` | `tui-host` and `tui-native` unless an optional DSH-TUI checkout is present (`DSH_OPS_TUI_ROOT`, plus `DSH_OPS_TUI_WORKER` for the native one); `mount` only when no native worker can be resolved there |
+| `linux-x64`, `darwin-arm64`, `darwin-x64` | all of `test/*.test.mjs` | `tui-host` and `tui-native` unless an optional DSH-TUI checkout is present (`DSH_OPS_TUI_ROOT`, plus `DSH_OPS_TUI_WORKER` for the native one); `mount` only when no native worker can be resolved there |
 | `win32-x64` | same inventory | the two above, plus `file-metadata` and `linux-attributes` (mode bits, POSIX ACLs, user xattrs, inode identity, sparse allocation) and `linux-shell` (the POSIX bash rung, which is its own subject) |
 
 `DSH_OPS_REQUIRE_RUNTIME=1` — which turns any skip into a failure — is set on the POSIX hosts
-only. On Windows the three suites above skip by platform, and `test/run.mjs` cannot tell that
+only. CI runs this same gate on `macos-15-intel` as a blocking leg; locally it is still the full gate.
+
+On Windows the three suites above skip by platform, and `test/run.mjs` cannot tell that
 apart from a missing runtime, so the script keeps its protection there through the skip set
 instead: anything skipped outside that list fails. The suites that would betray a worker that was
 never built (`permissions`, `ptc`) are not in the list.

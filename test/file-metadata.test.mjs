@@ -50,6 +50,31 @@ import { callTool, envelopeOf, requireWorker } from './lib/boundary.mjs'
 
 requireWorker('file-metadata')
 if (process.platform === 'win32') {
+  await test('Windows create-only publication inherits the same DACL as ordinary file creation', async () => {
+    await withTempDir('file-windows-create', async root => {
+      let directory=root
+      const ps = code => execFileSync('powershell.exe', ['-NoProfile','-NonInteractive','-Command',code],
+        {encoding:'utf8',env:{...process.env,PSModulePath:'',OPS_ACL_ROOT:directory}}).trim()
+      for (const name of ['normal','custom','token-default']) {
+        directory=path.join(root,name); fs.mkdirSync(directory)
+        if (name!=='normal') ps(`$sid=[System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value;
+          $acl=Get-Acl -LiteralPath $env:OPS_ACL_ROOT;
+          $acl.SetSecurityDescriptorSddlForm("${name==='custom'?'D:P(D;OIIO;0x20;;;WD)(A;;FA;;;$sid)(A;OIIO;FA;;;CO)(A;OICI;FR;;;BU)':'D:P(A;;FA;;;$sid)'}",[System.Security.AccessControl.AccessControlSections]::Access);
+          Set-Acl -LiteralPath $env:OPS_ACL_ROOT -AclObject $acl;`)
+        const reference=path.join(directory,name+'-reference'), target=path.join(directory,name+'-ops')
+        fs.writeFileSync(reference,'normal')
+        const result=envelopeOf(await callTool('write_file',{path:target,content:'published',expectedRevision:'absent'},{root}),assert)
+        assert.equal(result.status,'completed',JSON.stringify(result))
+        const dacl=name=>ps(`(Get-Acl -LiteralPath (Join-Path $env:OPS_ACL_ROOT '${name}')).GetSecurityDescriptorSddlForm([System.Security.AccessControl.AccessControlSections]::Access)`)
+        // CreatePrivateObjectSecurityEx marks AI; CreateFile omits that provenance bit on
+        // some Windows runners. Keep protection (P) and every inherited/explicit ACE exact.
+        const comparable=value=>value.replace(/^D:AI/,'D:')
+        assert.equal(comparable(dacl(name+'-ops')),comparable(dacl(name+'-reference')))
+        assert.equal(fs.readFileSync(target,'utf8'),'published')
+        fs.unlinkSync(target); fs.unlinkSync(reference)
+      }
+    })
+  })
   await test('Windows overwrite/edit/replace/copy retain exact owner/group/DACL and timestamps', async () => {
     await withTempDir('file-windows-metadata', async root => {
       const source = path.join(root, 'source')
@@ -78,6 +103,26 @@ if (process.platform === 'win32') {
       assert.equal(fs.readFileSync(to, 'utf8'), 'DONE')
     })
   })
+  await test('Windows restricted workspace token can edit, rename and delete a newly published file', async () => {
+    const [{ default: Sandbox }, { bootHost, shutdown }, { prepareWorkspace }] = await Promise.all([
+      import('@deepseek-ai/dsh-sandbox-local'), import('./lib/host.mjs'), import('../lib/workspace-preparation.js')])
+    await withTempDir('file-windows-workspace-acl', async root => {
+      const {ctx}=await bootHost()
+      try {
+        await ctx.plugin(Sandbox)
+        const policy={mode:'workspace-write',workspaceRoot:root,sessionId:'new-file-acl'}
+        await prepareWorkspace(policy)
+        const sandbox=ctx.get('sandbox'), target=path.join(root,'new.txt')
+        // Establish the real workspace capability before the file inherits its parent ACL.
+        const script="const fs=require('fs'),p=process.argv[1];fs.appendFileSync(p,' edited');fs.renameSync(p,p+'.moved');fs.unlinkSync(p+'.moved');"
+        const confined=await sandbox.confine([process.execPath,'-e',script,target],policy)
+        const result=envelopeOf(await callTool('write_file',{path:target,content:'new',expectedRevision:'absent'},{root}),assert)
+        assert.equal(result.status,'completed',JSON.stringify(result))
+        execFileSync(confined.argv[0],confined.argv.slice(1),{timeout:20000,encoding:'utf8'})
+        assert.equal(fs.existsSync(target),false); assert.equal(fs.existsSync(target+'.moved'),false)
+      } finally { await shutdown(ctx) }
+    })
+  })
   report('file-metadata')
   process.exit(process.exitCode ?? 0)
 }
@@ -87,6 +132,8 @@ const installed = command => {
 }
 const SETFACL = installed('setfacl') && installed('getfacl')
 const PYTHON = installed('python3')
+/** Whether this host can attach and read back a user attribute for the fixtures below. */
+const ATTRIBUTES = process.platform === 'darwin' || PYTHON
 const setUserAttribute = target => process.platform === 'darwin'
   ? execFileSync('/usr/bin/xattr', ['-w', 'user.dsh-ops', 'kept', target])
   : PYTHON && execFileSync('python3', ['-c', "import os,sys; os.setxattr(sys.argv[1],'user.dsh-ops',b'kept')", target])
@@ -105,13 +152,27 @@ const seed = (target, mode) => {
   return target
 }
 
+/** The same fixture with a user attribute attached while the mode still allows it. */
+const seedWithAttribute = (target, mode) => {
+  fs.writeFileSync(target, 'TOKEN\n')
+  setUserAttribute(target)
+  fs.chmodSync(target, mode)
+  return target
+}
+
 const replaceToken = async (target, workspace) =>
   envelopeOf(await callTool('replace', { path: target, pattern: 'TOKEN', replacement: 'DONE' }, { root: workspace }), assert)
 
 await test('every mode a caller can set survives a replacement', async () => {
   await withTempDir('file-metadata-mode', async workspace => {
     for (const mode of [0o600, 0o400, 0o640, 0o644, 0o755, 0o750]) {
-      const target = seed(path.join(workspace, `mode-${octal(mode)}.txt`), mode)
+      // A read-only mode denies `setxattr`, so the attribute has to be attached
+      // while the fixture is still writable. That is what makes this case catch a
+      // restore that applies the final mode before the attributes, on every host
+      // rather than only where macOS supplies `com.apple.provenance` for free.
+      const target = ATTRIBUTES
+        ? seedWithAttribute(path.join(workspace, `mode-${octal(mode)}.txt`), mode)
+        : seed(path.join(workspace, `mode-${octal(mode)}.txt`), mode)
       const body = await replaceToken(target, workspace)
 
       assert.equal(body.items[0].metadata.mode, octal(mode), `the envelope must report ${octal(mode)} as kept`)
@@ -120,6 +181,10 @@ await test('every mode a caller can set survives a replacement', async () => {
       assert.equal(body.items[0].metadata.owner, true)
       assert.equal(body.items[0].metadata.acl, false)
       assert.equal(body.items[0].metadataWarnings, undefined, 'a clean restore must not carry a warning')
+      if (ATTRIBUTES) {
+        assert.ok(body.items[0].metadata.xattrs.includes('user.dsh-ops'), `mode ${octal(mode)} must still put the attribute back`)
+        assert.equal(userAttribute(target), 'kept', `mode ${octal(mode)} must restore the attribute exactly`)
+      }
     }
   })
 })

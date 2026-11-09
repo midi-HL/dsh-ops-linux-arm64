@@ -15,6 +15,18 @@ import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { TOOL_PREFIX } from '../../lib/policy.js'
 import { PACKAGE_ROOT } from './harness.mjs'
+import { legacyComponent } from './legacy-component.mjs'
+
+/**
+ * The directory service rc.5's `run_code` asks for, over a session's committed cwd.
+ * @param {string} fallback - the directory a session without a committed cwd reports.
+ * @returns {object} the provided service shape.
+ */
+export const workingDirectoryOver = fallback => ({
+  get: (session) => session?.header?.cwd ?? fallback,
+  ensure: async (agent) => agent?.session?.header?.cwd ?? fallback,
+  set: async (_agent, target) => target ?? fallback,
+})
 
 /**
  * Boot a context with the real prompt and tool services installed.
@@ -22,9 +34,11 @@ import { PACKAGE_ROOT } from './harness.mjs'
  * @param {boolean} [options.withTools] - install the tool registry (default true).
  * @param {boolean} [options.withSystemPrompt] - install the prompt registry (default true).
  * @param {boolean} [options.keepLogger] - keep Cordis's console logging (default false).
+ * @param {'native'|'ptc'} [options.toolsMode] - deployment presentation mode (default native).
+ * @param {boolean} [options.withWorkingDirectory] - provide the required live directory service (default true).
  * @returns {Promise<{ctx: Context, tools: any, prompt: any}>} the host.
  */
-export async function bootHost({ withTools = true, withSystemPrompt = true, keepLogger = false } = {}) {
+export async function bootHost({ withTools = true, withSystemPrompt = true, keepLogger = false, toolsMode = 'native', withWorkingDirectory = true } = {}) {
   const ctx = new Context()
   if (!keepLogger) {
     // Cordis logs service and plugin activity at info level; a gate that prints
@@ -37,27 +51,37 @@ export async function bootHost({ withTools = true, withSystemPrompt = true, keep
   }
   if (withTools) {
     const ToolRuntime = (await import('@deepseek-ai/dsh-tools')).default
-    await ctx.plugin(ToolRuntime, { mode: 'native' })
+    await ctx.plugin(ToolRuntime, {})
+    const executor = await import(toolsMode === 'ptc'
+      ? '@deepseek-ai/dsh-tool-executor-ptc' : '@deepseek-ai/dsh-tool-executor-native')
+    await ctx.plugin(executor, {})
   }
+  // Each fixture supplies an explicit live-directory provider; missing-service tests opt out.
+  if (withWorkingDirectory) ctx.provide('workingDirectory', workingDirectoryOver(process.cwd()))
   return { ctx, tools: ctx.get('tools'), prompt: ctx.get('systemPrompt') }
 }
 
 /**
- * Load a fresh instance of the plugin module.
+ * Load a fresh instance of the legacy global file component.
  *
+ * The package root now publishes a per-preset mode instead of a global surface
+ * (it is the optional client-carrier row), so these helpers mount the retained
+ * legacy file module: its kernel semantics — global publication, read dedup,
+ * worker lifecycle — are what the shared fixtures below still verify.
+ * The test-only wrapper opts in only during the synchronous apply guard.
  * A fresh module graph per mount keeps module-level state from leaking between
  * scenarios, at the cost of one import per call.
  * @param {string} [tag] - a cache-busting tag.
  * @returns {Promise<{apply: Function, name: string}>} the plugin module.
  */
 export async function loadPlugin(tag = `${Date.now()}-${Math.random()}`) {
-  const file = pathToFileURL(path.join(PACKAGE_ROOT, 'lib', 'index.js')).href
-  return import(`${file}?tag=${tag}`)
+  const file = pathToFileURL(path.join(PACKAGE_ROOT, 'lib', 'components', 'file', 'index.js')).href
+  return legacyComponent(await import(`${file}?tag=${tag}`))
 }
 
 /**
- * Mount the plugin's legacy module entry (the file component) and wait until
- * its tools appear (or the deadline passes).
+ * Mount the legacy file component and wait until its tools appear (or the
+ * deadline passes).
  * @param {object} options - mount inputs.
  * @param {Context} options.ctx - the host context.
  * @param {Record<string, unknown>} [options.config] - the plugin row config.

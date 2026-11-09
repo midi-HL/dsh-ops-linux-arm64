@@ -1,4 +1,4 @@
-# Native PTC enhancement — Windows x64, Linux x64, Apple Silicon
+# Native PTC enhancement — Windows x64, Linux x64, macOS arm64/x64
 
 0.4.0 PTC callers use [Outcome contracts](ptc-outcomes.md) / [PTC 结果契约](PTC结果契约.md).
 The historical worker/recovery details below remain applicable; SDK results now wrap canonical facts in `data`.
@@ -9,29 +9,32 @@ background component has been removed.
 
 ## Runtime-bearing installation and original DSH permission linkage
 
-0.3.1 ships native workers for `win32-x64`, `linux-x64` and `darwin-arm64`, each with a version/checksum receipt, plus the Windows Bash IPC proxies. Formal `verify:release` requires all three target pairs and validates every PE/ELF/Mach-O worker and the Windows IPC binary/source closure. Local `check --staged` verifies only local development outputs. Intel Mac and Windows/Linux ARM64 are not supported. The Windows Bash payload remains a Windows-only optional dependency; PowerShell is host-managed. POSIX uses host Bash. There is no postinstall download/build. Source builds use `npm run build:ptc`, plus `npm run build:bash-ipc` on Windows.
+The current release ships native workers for `win32-x64`, `linux-x64`, `darwin-arm64` and `darwin-x64`, each with a version/checksum receipt, plus the Windows Bash IPC proxies. 0.3.1 shipped the first three; current support adds Intel macOS on macOS 13+. Formal `verify:release` requires all four target pairs and validates every PE/ELF/Mach-O worker and the Windows IPC binary/source closure. Local `check --staged` verifies only local development outputs. Windows/Linux ARM64 are not supported. macOS 12 lacks `CLONE_ACL`; its write-path fallback is a separate follow-up, not part of this support claim. The Windows Bash payload remains a Windows-only optional dependency; PowerShell is host-managed. POSIX uses host Bash. There is no postinstall download/build. Source builds use `npm run build:ptc`, plus `npm run build:bash-ipc` on Windows.
 
 PTC/Bash use original per-call sandboxPolicy and sandbox.confine, reporting the
 host's full/partial enforcement honestly. Read-only permits existing result pages
 but rejects mutations/new audit records. Absolute operation roots are selections,
 not new authority; full access permits external roots without confinement.
 No-follow/protection/no-overwrite remain operation integrity semantics.
-Windows owned Modify-only workspaces receive a backed-up, directory-only
-WRITE_OWNER prerequisite automatically before outer run_code/pwsh launch. This
-is not recursive repair, ownership change, self-escalation or unconfined fallback.
+Windows workspaces that already grant WRITE_OWNER are accepted as-is whatever
+their owner; otherwise an owned Modify-only root receives a backed-up,
+directory-only WRITE_OWNER prerequisite automatically before outer run_code/pwsh
+launch (#651). This is not recursive repair, ownership change, self-escalation or
+unconfined fallback.
 Real Windows provider and pure PTC SDK acceptance is covered in the release gates.
 
 ## Native file component and release scope
 
 The fixed file component follows DSH fs-sandbox's trusted-operation policy fence,
 not arbitrary-code isolation; shell and PTC code still require confinement.
-Runtime binaries target Windows x64, Linux x64 and macOS Apple Silicon; IPC proxies remain Windows x64 only.
+Runtime binaries target Windows x64, Linux x64 and macOS arm64/x64; IPC proxies remain Windows x64 only.
 
 In `workspace-write`, native batch/result operations and their audit records are
 permitted under the selected workspace root through DSH confinement. Read-only
-permits existing result pages only, not new records or mutations. Windows owned
-Modify-only roots are prepared automatically with directory-only WRITE_OWNER,
-not FullControl, before the outer run_code transport starts. Existing DACLs are
+permits existing result pages only, not new records or mutations. Windows roots that
+already grant WRITE_OWNER are used as-is; otherwise an owned Modify-only root is
+prepared automatically with directory-only WRITE_OWNER, not FullControl, before
+the outer run_code transport starts. When an ACE is added, the existing DACL is
 backed up under DSH_HOME/dsh-ops/acl-backups; descendants, owners and explicit
 denials are never rewritten. Matching Windows x64 Bash payloads use a private
 IPC-compatible MSYS copy, with the original DSH token/confinement unchanged.
@@ -53,8 +56,8 @@ Rust >=1.88 is required. Build uses `cargo build --release --locked` against
 `native/Cargo.toml`. No install scripts download binaries. On Windows, enable the
 session toolchain before building; do not add multi-version toolchains to global PATH.
 
-The `dsh-ops/ptc` bundle row is enabled by default after #170; existing explicit
-profile disablement is preserved. Config accepts `required` (default false), an optional
+The `dsh-ops/mode-ptc` row is enabled by default; existing explicit profile
+disablement is preserved. Config accepts `required` (default false), an optional
 absolute `binaryPath`, `allowedTools`, and `alwaysLoaded`; see [SDK loading](ptc-sdk-loading.md). `DSH_OPS_WORKER_BIN` can
 select a build; otherwise the component uses `runtime/<platform>-<arch>/dsh-ops-worker[.exe]` before `native/target/release`.
 Published 0.3.1 packages include the runtime bytes
@@ -68,7 +71,7 @@ host's public prompt assembly (`tools:ptc-only` section plus the reserved-only w
 schema), not private `modeFor`, run_code existence alone or a guessed session key.
 This PTC row publishes its independent SDK only in PTC-only scopes, with inspect/result and the
 loader initially resident. Other APIs require next-step activation or `alwaysLoaded`. It adds
-no bindings or extra prompt in Native/both scopes. The file row independently supplies Native ops_result page/release; see [result budgets](result-budgets.md#native-and-ptc-reference-pages). 文件组件独立提供 Native 引用分页/释放，详见[结果预算](结果预算.md#native-与-ptc-引用分页)。
+no bindings or extra prompt in Native scopes. The file row independently supplies Native ops_result page/release; see [result budgets](result-budgets.md#native-and-ptc-reference-pages). 文件组件独立提供 Native 引用分页/释放，详见[结果预算](结果预算.md#native-与-ptc-引用分页)。
 The host generates SDK declarations from the same tool schemas; no duplicate guide
 or dynamic plan IDs are added to the system prefix.
 
@@ -154,7 +157,10 @@ Their important fields are (paths resolve relative to the DSH session cwd):
   epoch-millisecond `modified`); at least one positive glob is required.
 - `ops_grep`: required regex `pattern`, optional `path` and array `glob` filter.
   Use `summary` for aggregate file/match totals, `count` for per-file counts,
-  `content` for matching text (default). Item pages default to 100, with 0-based
+  `content` for matching text (default), or `definitions` for only the lines
+  where the matched identifier is declared (lexical classification, no
+  `multiline`/context flags; on a complete scan `matched` counts every matching
+  line and `total` the returned declaration lines). Item pages default to 100, with 0-based
   `offset` and `nextOffset`. Every page scans candidates to count totals, but only
   materializes the requested window. `complete:false` means more results or an
   incomplete scan; `truncated`/`failed` scans are not exhaustive. Totals exclude
@@ -361,10 +367,16 @@ DSH process sandbox acceptance executed.
 Linux x64 (`x86_64-unknown-linux-gnu`): release build, `cargo test`, full
 `npm run verify` (every suite that does not need a FastCtx runtime, i.e. 28 passed
 and 2 skipped) and the native worker scenarios executed on the platform, including
-the DSH local sandbox's workspace/temporary-area policy fence.
-macOS arm64 (`aarch64-apple-darwin`) is `cargo check --locked` only: compiling the
-platform-specific code is not a run, and macOS is not a release claim. Actual
-on-platform macOS run and real sandbox denial tests **still required before release**.
+the DSH local sandbox's workspace/temporary-area policy fence. The *released* Linux
+x64 worker is built for `x86_64-unknown-linux-musl` and statically linked, so the
+shipped artifact no longer requires a `GLIBC_*` floor; reproduce it with
+`npm run build:ptc -- --target x86_64-unknown-linux-musl`.
+macOS arm64 (`aarch64-apple-darwin`) and macOS Intel (`x86_64-apple-darwin`) run the
+full gate in CI: `macos-latest` (arm64) and `macos-15-intel` (x64) are both blocking
+legs. Both build and stage
+their Mach-O worker, run the suite, and verify the receipt. The earlier 0.3.1
+`cargo check --locked`-only record is superseded. A local Intel macOS 12.7.6 run
+still has one expected `CLONE_ACL` failure, so macOS 12 remains a follow-up.
 No fixed token/time saving percentage, actual model-turn benchmark,
 live Desktop upgrade, npm release or GitHub push is claimed.
 

@@ -8,7 +8,11 @@
  * @module dsh-ops/build/lib/check
  */
 
+import { checkNiubash } from './niubash.mjs'
+import { NIUBASH_PACKAGE_PATH, verifyNiubashTree } from '../../../lib/cli/niubash-payload.js'
+import { checkNiubashTarball } from './niubash-tar.mjs'
 import fs from 'node:fs'
+import { checkUnixWorkerModes } from './tar-modes.js'
 import path from 'node:path'
 import { stageDir } from './assemble.js'
 import { injectedOptionalDependencies, printInjection } from './publish-dir.js'
@@ -177,6 +181,15 @@ export async function stepCheck(context) {
     ok('publish', `${path.basename(mainTarball)} (${size(fs.statSync(mainTarball).size)})`)
   }
 
+  if (fs.existsSync(mainTarball)) {
+    try {
+      await checkUnixWorkerModes(mainTarball)
+      ok('modes', 'all three Unix workers have TAR mode 0755')
+    } catch (error) {
+      missing('modes', error.message)
+    }
+  }
+
   // 5. The release-wide record.
   const releaseProvenance = readJsonIfExists(path.join(dist, 'provenance.json'))
   if (releaseProvenance === undefined) missing('provenance', 'provenance.json is not written')
@@ -188,6 +201,14 @@ export async function stepCheck(context) {
     ok('provenance', `provenance.json lists ${releaseProvenance.packages.length} packages at their declared pins`)
   }
 
+  if (context.backend !== 'git-bash') {
+    try {
+      checkNiubash(context)
+      checkNiubashTarball(mainTarball)
+      verifyNiubashTree(path.join(publishDir, NIUBASH_PACKAGE_PATH))
+      ok('niubash', 'complete frozen Niubash v1.5.0 stage and publish tree verified')
+    } catch (error) { missing('niubash', error.message) }
+  }
   printInjection(context)
   if (problems.length > 0) {
     console.log(`check: ${problems.length} problem(s); nothing was downloaded or built`)

@@ -1,8 +1,8 @@
 /** Mount only package-owned descriptors; the host gateway supplies operator admission. */
 import path from 'node:path'
-import type { Context } from '@deepseek-ai/cordis'
-import type {} from '@deepseek-ai/dsh-typert-registry'
-import type { SubprocessRuntime } from '@deepseek-ai/dsh-subprocess'
+import type { Context } from '../adapter/dsh/types.js'
+import type {} from '../adapter/dsh/types.js'
+import type { SubprocessRuntime } from '../adapter/dsh/types.js'
 import { dshHome, PACKAGE_ROOT } from '../paths.js'
 import { RuntimeActions } from './runtime-actions.js'
 import type { RuntimeProcessRunner } from './runtime-actions.js'
@@ -24,9 +24,9 @@ export function runtimeProcessRunner(subprocess: Pick<SubprocessRuntime, 'spawn'
       error: error instanceof Error ? error.message : String(error) } }
   }
 }
-export function mountRuntimeSettings(root: Context): void {
+export function mountRuntimeSettings(root: Context, options: { config?: () => unknown } = {}): void {
   root.inject(['typert', 'subprocess'], ctx => {
-    const service = new RuntimeActions({ run: runtimeProcessRunner(ctx.subprocess) })
+    const service = new RuntimeActions({ run: runtimeProcessRunner(ctx.subprocess), ...options })
     ctx.provide('opsSettings', service)
     ctx.typert.register({ package: 'dsh-ops', face: 'host', schemas: [], model: { services: [], events: [], objects: [] }, invocations: RUNTIME_DESCRIPTORS })
     ctx.effect(() => () => service.dispose(), 'dsh-ops: runtime settings actions')

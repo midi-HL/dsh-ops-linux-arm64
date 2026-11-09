@@ -1,4 +1,7 @@
-import type { JsonSchemaNode, ObjectJsonSchema, ToolPresentationMode } from '@deepseek-ai/dsh-tools'
+import type { JsonSchemaNode, ObjectJsonSchema } from '../adapter/dsh/types.js'
+
+/** OPS kernel projections, independent of the host's executor configuration. */
+export type CapabilityPresentation = 'native' | 'ptc'
 
 export type Component = 'file' | 'ptc' | 'shell' | 'discovery'
 export type ParameterSchema = ObjectJsonSchema & Record<string, unknown> & {
@@ -10,8 +13,12 @@ export type ParameterSchema = ObjectJsonSchema & Record<string, unknown> & {
 export interface CapabilityMetadata {
   readonly rawName: string
   readonly component: Component
-  readonly presentations: readonly ToolPresentationMode[]
+  readonly presentations: readonly CapabilityPresentation[]
   readonly availability: 'resident' | 'discoverable'
+  /** PTC publication is independent of the Native tier. */
+  readonly ptcAvailability?: 'resident' | 'discoverable'
+  readonly supportsContinuation?: boolean
+  readonly observesRead?: boolean
   /** Conservative per-tool flag: some actions (batch plan/result page) remain read-only. */
   readonly mutates: boolean
   readonly concurrencySafe: boolean

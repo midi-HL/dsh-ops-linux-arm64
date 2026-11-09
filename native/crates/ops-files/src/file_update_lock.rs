@@ -79,7 +79,9 @@ impl UpdateLock {
     /// `contention` is the caller's own refusal text, so a losing writer keeps
     /// reporting the same `REVISION_CONFLICT` contract it always did.
     pub fn acquire(parent: &Dir, name: &str, contention: &str) -> Result<Self> {
-        Self::acquire_with(parent, name, contention, publication::open_update_lock)
+        Self::acquire_with(parent, name, contention, |parent, name| {
+            publication::open_update_lock(parent, name, contention)
+        })
     }
 
     /// [`acquire`](Self::acquire) with the sidecar opener as a parameter.
@@ -97,7 +99,7 @@ impl UpdateLock {
             let lock = open(parent, name)?;
             // Non-blocking on purpose: a busy path is reported, never waited on.
             FileExt::try_lock_exclusive(&lock)
-                .map_err(|_| Failure::new("REVISION_CONFLICT", contention))?;
+                .map_err(|error| publication::lock_error(error, contention))?;
             let lock = Self {
                 handle: cap_std::fs::File::from_std(lock.try_clone()?),
                 lock,
@@ -117,10 +119,10 @@ impl UpdateLock {
 
     /// Compare the sidecar name's current inode with the one this lock holds.
     fn binding(&self) -> Binding {
-        let reopened = match self
-            .parent
-            .open_with(&self.name, OpenOptions::new().read(true).follow(FollowSymlinks::No))
-        {
+        let reopened = match self.parent.open_with(
+            &self.name,
+            OpenOptions::new().read(true).follow(FollowSymlinks::No),
+        ) {
             Ok(file) => file,
             // A missing name is the state a finishing holder leaves behind.
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Binding::Moved,
@@ -178,14 +180,20 @@ mod tests {
         fn new(tag: &str) -> Self {
             let root = std::fs::canonicalize(std::env::temp_dir())
                 .unwrap()
-                .join(format!("dsh-ops-update-lock-{tag}-{}", uuid::Uuid::new_v4()));
+                .join(format!(
+                    "dsh-ops-update-lock-{tag}-{}",
+                    uuid::Uuid::new_v4()
+                ));
             std::fs::create_dir(&root).unwrap();
             let dir = Dir::open_ambient_dir(&root, ambient_authority()).unwrap();
             Self { root, dir }
         }
         /// The sidecar name `acquire` takes for one target name.
         fn sidecar(name: &str) -> String {
-            format!(".dsh-ops-update-{:x}.lock", Sha256::digest(name.to_lowercase().as_bytes()))
+            format!(
+                ".dsh-ops-update-{:x}.lock",
+                Sha256::digest(name.to_lowercase().as_bytes())
+            )
         }
     }
     impl Drop for Fixture {
@@ -202,9 +210,15 @@ mod tests {
         let name = Fixture::sidecar("notes.txt");
         {
             let _lock = UpdateLock::acquire(&fixture.dir, &name, "busy").unwrap();
-            assert!(fixture.root.join(&name).is_file(), "the lock exists while it is held");
+            assert!(
+                fixture.root.join(&name).is_file(),
+                "the lock exists while it is held"
+            );
         }
-        assert!(!fixture.root.join(&name).exists(), "releasing the lock removes its sidecar");
+        assert!(
+            !fixture.root.join(&name).exists(),
+            "releasing the lock removes its sidecar"
+        );
         assert_eq!(std::fs::read_dir(&fixture.root).unwrap().count(), 0);
     }
 
@@ -217,9 +231,16 @@ mod tests {
         std::fs::write(fixture.root.join(&name), b"").unwrap();
         {
             let _lock = UpdateLock::acquire(&fixture.dir, &name, "busy").unwrap();
-            assert_eq!(std::fs::metadata(fixture.root.join(&name)).unwrap().len(), 0, "the sidecar still carries no payload");
+            assert_eq!(
+                std::fs::metadata(fixture.root.join(&name)).unwrap().len(),
+                0,
+                "the sidecar still carries no payload"
+            );
         }
-        assert!(!fixture.root.join(&name).exists(), "the writer that finished removes the leftover");
+        assert!(
+            !fixture.root.join(&name).exists(),
+            "the writer that finished removes the leftover"
+        );
     }
 
     /// Two writers on one name: the loser is refused with the caller's contract
@@ -229,9 +250,13 @@ mod tests {
         let fixture = Fixture::new("contention");
         let name = Fixture::sidecar("notes.txt");
         let held = UpdateLock::acquire(&fixture.dir, &name, "busy").unwrap();
-        let refused = UpdateLock::acquire(&fixture.dir, &name, "busy").err().expect("the second writer is refused");
+        let refused = UpdateLock::acquire(&fixture.dir, &name, "busy")
+            .expect_err("the second writer is refused");
         assert_eq!(refused.code, "REVISION_CONFLICT");
-        assert!(fixture.root.join(&name).is_file(), "the winner's sidecar is untouched by the loser");
+        assert!(
+            fixture.root.join(&name).is_file(),
+            "the winner's sidecar is untouched by the loser"
+        );
         drop(held);
         assert!(!fixture.root.join(&name).exists());
     }
@@ -247,7 +272,10 @@ mod tests {
         std::fs::remove_file(fixture.root.join(&name)).unwrap();
         std::fs::write(fixture.root.join(&name), b"").unwrap();
         drop(held);
-        assert!(fixture.root.join(&name).is_file(), "the re-created sidecar belongs to a later writer");
+        assert!(
+            fixture.root.join(&name).is_file(),
+            "the re-created sidecar belongs to a later writer"
+        );
     }
 
     /// A holder whose name was taken away must not publish under the orphaned
@@ -263,25 +291,34 @@ mod tests {
         std::fs::write(fixture.root.join(&name), b"").unwrap();
         let mut raced = false;
         let lock = UpdateLock::acquire_with(&fixture.dir, &name, "busy", |parent, name| {
-            let opened = publication::open_update_lock(parent, name)?;
+            let opened = publication::open_update_lock(parent, name, "busy")?;
             if !raced {
                 raced = true;
                 // A finishing holder removes the sidecar, and the next writer creates
                 // a new one, while this writer is still holding the old handle.
                 parent.remove_file(name)?;
-                publication::open_update_lock(parent, name)?;
+                publication::open_update_lock(parent, name, "busy")?;
             }
             Ok(opened)
         })
         .expect("the acquisition rebinds instead of failing");
-        assert_eq!(lock.binding(), Binding::Bound, "the writer binds to the live name, not the orphaned inode");
+        assert_eq!(
+            lock.binding(),
+            Binding::Bound,
+            "the writer binds to the live name, not the orphaned inode"
+        );
         // With the rebind, the live sidecar is held: without it, the orphaned handle
         // would own the lock while a second writer took the name — two writers here.
         assert_eq!(
-            UpdateLock::acquire(&fixture.dir, &name, "busy").err().expect("contended").code,
+            UpdateLock::acquire(&fixture.dir, &name, "busy")
+                .expect_err("contended")
+                .code,
             "REVISION_CONFLICT"
         );
         drop(lock);
-        assert!(!fixture.root.join(&name).exists(), "the bound holder removes the sidecar it published under");
+        assert!(
+            !fixture.root.join(&name).exists(),
+            "the bound holder removes the sidecar it published under"
+        );
     }
 }

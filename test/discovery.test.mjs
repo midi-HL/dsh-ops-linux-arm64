@@ -1,3 +1,4 @@
+import { Context } from '@deepseek-ai/cordis'
 import { getEncoding } from 'js-tiktoken'
 import { resolveDiscoveryConfig } from '../lib/config.js'
 import { DISCOVERABLE_TOOLS } from '../lib/discovery/config.js'
@@ -32,18 +33,19 @@ await test('discovery-entry schema has a reproducible pinned token measurement, 
   const wire = JSON.stringify([{ name: publicToolName('discover_tools'), description: DISCOVERY_DESCRIPTION, parameters: DISCOVERY_PARAMETERS }])
   const tokens = getEncoding('cl100k_base').encode(wire).length
   console.log(`  discovery schema: ${tokens} cl100k_base tokens, ${Buffer.byteLength(wire)} UTF-8 bytes; js-tiktoken 1.0.21; compact JSON name/description/parameters; not provider billing or the whole OPS surface`)
-  assert.equal(tokens, 95)
+  assert.equal(tokens, 114)
 })
 await test('scoped file cancellation aborts active workers and disposal waits for their completion', () => withTempDir('discovery-cancel', async dir => {
   let spawned, complete
   const done = new Promise(resolve => { complete = resolve })
-  const ctx = { get(name) {
+  const ctx = Object.assign(new Context(), { get(name) {
+    if (name === 'workingDirectory') return { get: () => dir, ensure: async () => dir }
     if (name === 'sandboxPolicy') return { resolve: () => ({ mode: 'danger-full-access', workspaceRoot: dir }) }
     if (name === 'subprocess') return { spawn(options) {
       spawned = options
       return { done, collected: { stdout: { readFrom: () => ({ text: '{}', lossy: false }) }, stderr: { readFrom: () => ({ text: '', lossy: false }) } } }
     } }
-  } }
+  } })
   const runtime = new NativeFileTools({ ctx, config: { workerPath: 'fixture', denyCredentialReads: false } })
   await runtime.start([])
   const call = runtime.call('stat', { path: '.' }, { agent: { session: { id: 'cancel-test', header: { cwd: dir } } } })

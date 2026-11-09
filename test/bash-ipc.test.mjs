@@ -4,10 +4,31 @@ import { pathToFileURL } from 'node:url'
 import { createHash } from 'node:crypto'
 import { pinnedBashExecutable } from '../lib/shells/pinned.js'
 import { patchMsys, proxyDefinition } from '../lib/bash-pe.js'
-import { confinedBash, restrictedCompatibility } from '../lib/bash-ipc.js'
+import { confinedBash, quarantineGeneration, renameWithRetry, restrictedCompatibility, RENAME_RETRY_DELAYS_MS } from '../lib/bash-ipc.js'
+import { markManaged } from '../lib/bash-ipc-lifecycle.js'
+import { copyFixtureModules, NIUBASH_MODULES } from './lib/niubash-distribution-fixture.mjs'
 import { assert, test, report, withTempDir } from './lib/harness.mjs'
 await test('PE patch rejects non-PE input without writing anything', () => {
   assert.throws(()=>patchMsys(Buffer.from('not a DLL')),/Expected PE/)
+})
+await test('quarantine rename retries only transient sharing errors, a bounded number of times', () => {
+  const eperm=()=>Object.assign(new Error('EPERM: operation not permitted'),{code:'EPERM'})
+  let calls=0, waits=[]
+  renameWithRetry('a','b',{delays:[1,2],wait:ms=>waits.push(ms),rename:()=>{calls+=1; if(calls<3)throw eperm()}})
+  assert.equal(calls,3,'two refusals are absorbed, the third attempt succeeds')
+  assert.deepEqual(waits,[1,2])
+  calls=0
+  assert.throws(()=>renameWithRetry('a','b',{delays:[1,2],wait:()=>{},rename:()=>{calls+=1; throw eperm()}}),error=>error.code==='EPERM')
+  assert.equal(calls,3,'bounded: the first attempt plus one per delay, never more')
+  // The configured budget must stay above the worst window measured in #352 (1639 ms); the
+  // delays also fix the attempt count, so a shortened budget turns this assertion red.
+  const budget=RENAME_RETRY_DELAYS_MS.reduce((sum,ms)=>sum+ms,0)
+  assert.equal(RENAME_RETRY_DELAYS_MS.length,5,'five waits, i.e. six attempts including the first')
+  assert.equal(budget,2500,'the cumulative budget is the documented 2.5 s')
+  assert.ok(budget>1639,'the budget covers the worst measured recovery window from #352')
+  calls=0
+  assert.throws(()=>renameWithRetry('a','b',{delays:[1,2],wait:()=>{},rename:()=>{calls+=1; throw Object.assign(new Error('ENOENT: no such file'),{code:'ENOENT'})}}))
+  assert.equal(calls,1,'an error that will not change is surfaced immediately')
 })
 await test('proxy definitions never intercept file, token, or impersonation APIs', () => {
   const kernel=proxyDefinition(['CreateNamedPipeA','CreatePipe','CreateFileA','CreateProcessW','ImpersonateNamedPipeClient'],'kernel32.dll')
@@ -64,52 +85,58 @@ await test('restricted compatibility accepts the pinned payload and explains a m
     assert.throws(()=>confinedBash(path.join(root,'bin/bash.exe'),{source:'well-known'}),/system Git for Windows install .*works only in danger-full-access/s)
   })
 })
-await test('a tampered cached generation is rejected, quarantined and rebuilt', async () => {
+await test('a tampered leased generation is refused without moving active paths; an idle fixture recovers', async () => {
   if(process.platform!=='win32')return
-  const receipt=path.resolve('runtime/win32-x64/bash-ipc/provenance.json')
-  if(!fs.existsSync(receipt))return
   const source=path.resolve(path.dirname(pinnedBashExecutable({file:process.env.DSH_OPS_TEST_BASH})),'..')
   const bash=path.join(source,'usr/bin/bash.exe')
-  if(!fs.existsSync(bash))return
   await withTempDir('bash-ipc-tamper',async home=>{
-    const first=confinedBash(bash,{home})
-    const target=path.join(home,'dsh-ops','bash-ipc',first.runtime)
-    const bads=()=>fs.readdirSync(path.dirname(target)).filter(n=>n.includes('.bad-')).length
-
-    // (1) Content changed, **length preserved** — the case only the "versus the in-package receipt"
-    //     anchor can see. A stat-only comparison (which an intermediate revision shipped) let this
-    //     through on both paths.
-    // (1) Content changed, length preserved, **and the manifest's recorded size/mtime updated to
-    //     match** — i.e. the attacker rewrote the manifest too, which is precisely what the cheap stat
-    //     layer cannot catch. (Restoring mtime with `utimes` is not a reliable setup: it quantises, and
-    //     two attempts failed to settle on the recorded value. Driving the comparison from the manifest
-    //     side is deterministic.) With a stat-only comparison — which an intermediate revision
-    //     shipped — this passes on **both** paths; the "versus the in-package receipt" anchor is what
-    //     rejects it. Verified by mutation: disable that anchor and this assertion stops failing.
-    const proxy=path.join(target,'usr/bin/opsipc.dll')
-    const markerPath=path.join(target,'.ops-ipc.json')
-    const marker=JSON.parse(fs.readFileSync(markerPath,'utf8'))
-    const buf=fs.readFileSync(proxy)
-    buf[buf.length-1]^=0xff
-    fs.writeFileSync(proxy,buf)
+    const first=confinedBash(bash,{home}), target=path.dirname(path.dirname(path.dirname(first.file)))
+    const proxy=path.join(target,'usr/bin/opsipc.dll'), markerPath=path.join(target,'.ops-ipc.json')
+    const marker=JSON.parse(fs.readFileSync(markerPath,'utf8')),buf=fs.readFileSync(proxy)
+    buf[buf.length-1]^=0xff;fs.writeFileSync(proxy,buf)
     const now=fs.statSync(proxy)
-    assert.equal(now.size,marker.tree['usr/bin/opsipc.dll'].size,'test setup: flipping one byte must not change the size')
+    assert.equal(now.size,marker.tree['usr/bin/opsipc.dll'].size)
     marker.tree['usr/bin/opsipc.dll']={size:now.size,mtimeMs:now.mtimeMs}
     fs.writeFileSync(markerPath,JSON.stringify(marker)+'\n')
-    const second=confinedBash(bash,{home})
-    assert.equal(second.file,first.file)
-    assert.equal(bads()>0,true,'a tampered generation must be quarantined')
+    assert.throws(()=>confinedBash(bash,{home}),/could not be quarantined/)
+    assert.equal(fs.existsSync(target),true,'leased absolute paths must remain untouched')
+    assert.equal(fs.readdirSync(path.dirname(target)).some(n=>n.includes('.bad-')),false)
+    // No shell was launched by this fixture: explicitly model a provably idle generation.
+    fs.rmSync(path.join(target,'.ops-leases'),{recursive:true,force:true})
+    const recovered=confinedBash(bash,{home})
+    assert.equal(recovered.file,first.file)
+    assert.equal(fs.readdirSync(path.dirname(target)).some(n=>n.includes('.bad-')),true)
+    assert.equal(confinedBash(bash,{home}).file,first.file)
+  })
+})
+await test('a transient EPERM on quarantine is retried instead of stranding the cache (#352)', async () => {
+  await withTempDir('bash-ipc-quarantine', async home=>{
+    const target=path.join(home,'dsh-ops','bash-ipc','generation')
+    fs.mkdirSync(target,{recursive:true})
+    markManaged(target)
+    fs.writeFileSync(path.join(target,'payload.txt'),'a generation that failed verification')
+    const realRename=fs.renameSync
+    let attempts=0
+    // Two refusals, then the same rename Windows would accept a moment later. Without the retry the
+    // first `EPERM` escapes and the generation is never quarantined — the cache stays stranded.
+    const quarantine=quarantineGeneration(target,{rename:(from,to)=>{
+      attempts+=1
+      if(attempts<=2)throw Object.assign(new Error('EPERM: operation not permitted'),{code:'EPERM'})
+      realRename(from,to)
+    }})
+    assert.equal(attempts,3,'both refused attempts are retried, and the third succeeds')
+    assert.equal(fs.existsSync(target),false,'the failed generation is moved aside')
+    assert.equal(fs.existsSync(quarantine),true,'the quarantine is a sibling, not a deletion')
+    assert.equal(path.dirname(quarantine),path.dirname(target))
 
-    // (2) A different size in one of the PATH directories — the stat layer catches this one, and the
-    //     rebuild must **not** throw (the pre-recovery code bricked the tool until the host restarted).
-    const again=path.join(home,'dsh-ops','bash-ipc',second.runtime)
-    fs.appendFileSync(path.join(again,'cmd/git.exe'),'X'.repeat(4096))
-    const third=confinedBash(bash,{home})
-    assert.equal(third.file,first.file)
-
-    // (3) Served from the rebuild, and the quarantine does not accumulate.
-    assert.equal(confinedBash(bash,{home}).file,third.file)
-    assert.equal(bads()<=2,true)
+    // A failure that does not go away must stay bounded rather than spin.
+    const stuck=path.join(home,'dsh-ops','bash-ipc','stuck')
+    fs.mkdirSync(stuck,{recursive:true})
+    markManaged(stuck)
+    let calls=0
+    assert.throws(()=>quarantineGeneration(stuck,{rename:()=>{calls+=1; throw Object.assign(new Error('EPERM'),{code:'EPERM'})}}),error=>error.code==='EPERM')
+    assert.equal(calls,RENAME_RETRY_DELAYS_MS.length+1,'the attempt budget is the configured one')
+    assert.equal(fs.existsSync(stuck),true,'a generation that cannot be moved is left where it was')
   })
 })
 await test('malformed IPC proxy receipts fail before staging a runtime', async () => {
@@ -119,17 +146,21 @@ await test('malformed IPC proxy receipts fail before staging a runtime', async (
     fs.mkdirSync(path.join(plugin, 'runtime/win32-x64/bash-ipc'), { recursive: true })
     fs.mkdirSync(path.join(payload, 'usr/bin'), { recursive: true })
     fs.writeFileSync(path.join(plugin, 'package.json'), JSON.stringify({ type: 'module' }))
-    for (const file of ['bash-ipc.js', 'bash-pe.js', 'shells/types.js']) {
-      fs.copyFileSync(path.resolve('lib', file), path.join(plugin, 'lib', file))
-    }
+    // The isolated install must carry every module the copied graph imports; a missing one makes
+    // the fixture fail with ERR_MODULE_NOT_FOUND instead of the receipt condition it tests (#512).
+    copyFixtureModules(plugin, ['bash-ipc.js', 'bash-ipc-lifecycle.js', 'bash-runtime-failure.js',
+      'bash-pe.js', 'shells/types.js', ...NIUBASH_MODULES])
     const dll = Buffer.from('receipt validation must precede PE parsing')
     fs.writeFileSync(path.join(payload, 'usr/bin/msys-2.0.dll'), dll)
     fs.writeFileSync(path.join(plugin, 'runtime/win32-x64/bash-ipc/provenance.json'), JSON.stringify({
       platform: 'win32-x64', msysSha256: createHash('sha256').update(dll).digest('hex'), files: null,
     }))
     const isolated = await import(pathToFileURL(path.join(plugin, 'lib/bash-ipc.js')).href)
+    // The raw runtime error names the stage; the session layer adds the EXECUTOR_UNAVAILABLE prefix
+    // when it renders the failure for the model (#512).
     assert.throws(() => isolated.confinedBash(path.join(payload, 'usr/bin/bash.exe'), { home, platform: 'win32' }),
-      /^Error: EXECUTOR_UNAVAILABLE: This MSYS version has no verified DSH IPC compatibility build/)
+      error => error.code === 'bash-ipc-mismatch'
+        && /^This MSYS version has no verified DSH IPC compatibility build/.test(error.message))
     assert.equal(fs.existsSync(home), false, 'invalid receipts cannot create a private runtime')
     assert.deepEqual(fs.readFileSync(path.join(payload, 'usr/bin/msys-2.0.dll')), dll)
   })

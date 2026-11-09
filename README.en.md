@@ -25,29 +25,33 @@ OPS adds bounded file and document tools to DSH. Native mode returns compact, li
 PTC code receives typed Outcome values from the same one-shot Rust worker. Host integration is
 strict TypeScript, compiled to the existing JavaScript package paths.
 
-> [!IMPORTANT]
-> This branch is the **0.4.0 release candidate**, not a published release. Approved acceptance requires
-> at least 40% less BM-01 output than OPS 0.3.x; the official reader is a separate comparison.
-> BM-03 limits file/discovery schemas to 400 tokens while keeping Bash at startup and reporting the
-> full total separately. Final measured evidence and functional CI are both required.
-> See [release status and limitations](docs/release-0.4.0.md). Commands using `@latest` below select
-> the published package; build and pack this checkout to evaluate the candidate.
+Supported: Windows x64, Linux x64, and macOS 13+ on Apple Silicon or Intel
+(`darwin-arm64`, `darwin-x64`). See [macOS](docs/macos.md).
 
-- Native starts with `ops_read_files` and `ops_discover_tools`; the default profile enables the shell row
-  and publishes `ops_bash` on every platform. Advanced tools activate in the owning agent's next
-  provider request.
+> [!IMPORTANT]
+> This branch is the **0.5.0 candidate**, not a published release: configuration now uses one
+> `dsh-ops` row. Commands using `@latest` below select the published package; build and pack this
+> checkout to evaluate the candidate. See the [changelog](docs/CHANGELOG.md).
+
+- The single row enables the four built-in preset consumers: Standard and Cordis publish resident
+  Native file tools, PTC publishes typed APIs, and Minimal has no resident file baseline. Native
+  discovery and typed SDK loading are independently configured. Advanced selections activate in
+  the owning agent's next provider request, never by executing a discovery action.
 - The PTC SDK catalogue has 18 APIs: 15 file/document tools, batch, result references and its loader.
   Only the configured resident or selected APIs are exposed. Native and PTC use separate outputs.
 - Discover bounded CSV/TSV, DOCX main-body paragraphs and a restricted PDF text layer. Binary DOC,
   OCR, general PDF rendering, web search and HTML crawling are not implemented. Read the
   [document-format limits](docs/native-kernel.md) before choosing a reader.
-- Seven independently toggled rows preserve saved profile IDs and settings. Per-tool official
-  replacements are off by default. [Settings](docs/configuration-reference.md) include validated
-  built-in forms and optional browser pages with an explicit offline carrier migration.
-- The shell row is on by default on all three platforms: Windows uses the pinned Bash payload
-  declared by the main package — `@dsh-ops/bash-win32-x64@0.2.1` in `optionalDependencies`, so npm
-  installs the independent **bash 5.3.15** (PortableGit `v2.56.0.windows.2`) that ships with ops,
-  and `bashPath` can point `ops_bash` at Git Bash instead; Linux/macOS use the distribution's own
+- One native-switch configuration page controls built-in and explicitly listed custom consumers.
+  Global switches gate per-preset choices without losing saved intent. Residency, dynamic loading,
+  Bash, file replacement and Windows host-PowerShell hiding are independently controlled; panel
+  capture and TUI start off. Custom presets use the same assembler as built-ins, while unlisted
+  presets remain unchanged. Move legacy row overrides into the single row; the Compatibility row
+  is removed. See [settings](docs/configuration-reference.md) and [architecture](docs/internal-architecture.md).
+- Built-in preset consumers are enabled by default: on Windows the package embeds the pinned
+  **official Niubash 1.5.0 portable payload** and downloads no Git Bash optional package; the
+  settings page's **Bash executor** card switches between that payload and a Git Bash/MSYS
+  executable you scan or type in (saved as `bashPath`). Linux/macOS use the distribution's own
   Bash, overridable with `config.bashPath`. `dsh-ops bash-runtime install` remains the path for
   installing, repairing and selecting a managed copy. PowerShell stays host-managed; its upgrade
   command previews the standard installation and requires `--yes` to execute.
@@ -95,7 +99,15 @@ dsh plugin --profile dsh-tui add dsh-ops
 
 A regular DSH CLI cannot manage the reserved `desktop` profile; do not confuse it with the desktop app's own entry point.
 
+Install the published registry package or a fully built and packed source tarball.
+Direct `git+https` installation and unbuilt source checkouts lack the complete runtime; see
+[installing from Git is not a supported channel](docs/upgrading.md#installing-from-git-is-not-a-supported-channel).
+
 #### Update
+
+The 0.5 series supports DSH **from 0.2.2-rc.1**, not 0.2.0/0.2.1 or earlier 0.2.2 previews. The DSH adapter remains; integration uses the native 0.2.2 tool-admission and executor APIs. See
+[host versions and display metadata](docs/usage.md#host-compatibility-and-display-metadata)
+for component icon exports, profile refresh and config/schema checks.
 
 Re-run the same `npx --yes dsh-ops@latest install --profile ...`, or use the official CLI `add dsh-ops@latest`. Reload when the app asks; restart the app when replacing code that is already loaded.
 
@@ -114,23 +126,35 @@ The former `dsh-ops/background` component (FastCtx background jobs) has been rem
 
 ## Optional read-only OPS sidebar
 
-Enable the `dsh-ops/tui` row in dsh-TUI and restart to add the OPS sidebar without stealing focus or executing tools. Without `tuiPanels`, only that optional row stays pending. See [Sidebar guide](docs/tui-panel.md). While focused, use `f` to filter, `n`/`p` for local pages and `a` to acknowledge all-session alerts; only bounded retained metadata is browsed, never fetched result pages.
+Enable `tui.enabled` on the `dsh-ops` row in dsh-TUI and restart to add the OPS sidebar without stealing focus or executing tools. Without `tuiPanels`, only that optional row stays pending. See [Sidebar guide](docs/tui-panel.md). While focused, use `f` to filter, `n`/`p` for local pages and `a` to acknowledge all-session alerts; only bounded retained metadata is browsed, never fetched result pages.
 
 ## Documentation
 
+- [Third-party preset integration API](docs/integration-api.md) · [External Native providers](docs/external-provider.md) · [Scoped diagnostics](docs/diagnostics.md)
+
 - [Usage](docs/usage.md) · [Troubleshooting](docs/troubleshooting.md) · [Component reference](docs/component-reference.md) · [Configuration reference](docs/configuration-reference.md)
+- [Windows runtime evidence](docs/windows-runtime-evidence.md): payload compatibility, Low integrity, MSYS startup and antivirus/approval diagnostics.
 - [Native PTC](docs/native-ptc.md) · [Manual validation](docs/manual-validation.md)
 - [Contributing](docs/CONTRIBUTING.md) · [Roadmap](docs/roadmap.md) · [Changelog](docs/CHANGELOG.md) · [Provenance](docs/PROVENANCE.md)
+- [CI troubleshooting](docs/ci-troubleshooting.md) · [CI 排错说明](docs/ci-troubleshooting.zh.md)
+
+## Windows Bash diagnostics
+
+Windows Bash diagnostics: `dsh-ops ladder` reports image and ancestor integrity
+labels separately from static MSYS hash compatibility. A Low-labelled executable
+can start a Low child even in full access, preventing writes to existing
+Medium/unlabeled files. Unreadable labels remain unknown. See
+[integrity inspection](docs/troubleshooting.md#windows-bash-integrity-labels).
 
 ## License
 
-Plugin source is distributed under **`MIT AND Apache-2.0`**: everything outside `licenses/fastctx/` is MIT; FastCtx is Apache-2.0. See [NOTICE](NOTICE), `licenses/fastctx/LICENSE-APACHE`, and `licenses/fastctx/NOTICE`.
+The current dsh-ops source is distributed under the **MIT License**; see [LICENSE](LICENSE). Versions before 0.3.2 bundled Apache-2.0-licensed FastCtx source; that source was removed together with the background component, and no FastCtx code or binary is part of the current distribution. FastCtx's license text and upstream notice are retained in `licenses/fastctx/`, and its historical attribution is preserved in [NOTICE](NOTICE).
 
 The separate Windows Bash payload package (the npm optional dependency `@dsh-ops/bash-win32-x64`) is distributed under its upstream components' licenses: Git for Windows includes GPL-2.0 and other licensed components, whose original licenses, notices and provenance records are kept with the payload. PowerShell stays host-managed and is distributed under Microsoft's MIT and third-party component licenses. The plugin's MIT license does not replace those licenses. See [PROVENANCE.md](docs/PROVENANCE.md).
 
 ## Acknowledgements
 
-The Rust tools are based on [yc-duan](https://github.com/yc-duan)'s Codex plugin FastCtx and use its source code. Vendor marking and deletion-only distribution changes were recorded in `vendor/fastctx/FORK.md` and `vendor/fastctx/UPSTREAM.md`, which remain in the repository history and in earlier published versions; the vendored source itself was removed with the background component. The FastCtx notice that must be reproduced follows:
+Versions before 0.3.2 bundled and distributed [yc-duan](https://github.com/yc-duan)'s Codex plugin FastCtx and used its source code to provide the Rust tool surface. FastCtx's source was removed with the background component; the current `native/` Rust core is original MIT-licensed dsh-ops code. FastCtx's license text and the notice that must be reproduced remain in `licenses/fastctx/` and [NOTICE](NOTICE) as attribution for those earlier versions:
 
 > This product includes FastCtx
 > (https://github.com/yc-duan/fastctx), Copyright (c) 2026 yc-duan,

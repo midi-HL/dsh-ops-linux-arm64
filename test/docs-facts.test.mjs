@@ -1,8 +1,10 @@
 /** Current user-facing docs mirror catalogue facts; keep the current surface from drifting again. */
 import fs from 'node:fs'
 import path from 'node:path'
-import { CAPABILITIES, FILE_TOOLS } from '../lib/capabilities/registry.js'
+import { getEncoding } from 'js-tiktoken'
+import { CAPABILITIES, FILE_TOOLS, capability } from '../lib/capabilities/registry.js'
 import { DISCOVERY_TERMS } from '../lib/capabilities/discovery.js'
+import { publicToolName } from '../lib/policy.js'
 import { assert, test, report, PACKAGE_ROOT } from './lib/harness.mjs'
 
 const read = name => fs.readFileSync(path.join(PACKAGE_ROOT, name), 'utf8')
@@ -35,9 +37,9 @@ await test('the catalogue counts in the current docs match the registry', () => 
 })
 
 await test('the current token and byte budget matches the measured gate', () => {
-  assert.match(read('docs/discovery.md'), /242 tokens \/ 1101 bytes/u)
-  assert.match(read('docs/工具发现.md'), /242 tokens \/ 1101 字节/u)
-  assert.match(read('docs/benchmark-gates.md'), /242 tokens \/ 1,101 bytes/u)
+  assert.match(read('docs/discovery.md'), /261 tokens \/ 1196 bytes/u)
+  assert.match(read('docs/工具发现.md'), /261 tokens \/ 1196 字节/u)
+  assert.match(read('docs/benchmark-gates.md'), /261 tokens \/ 1,196 bytes/u)
   assert.doesNotMatch(read('docs/discovery.md'), /241 tokens/u)
 })
 
@@ -48,6 +50,53 @@ await test('the discovery allowedTools example is exactly the discoverable catal
     const body = line.slice(line.indexOf('allowedTools:') + 'allowedTools:'.length)
     const names = body.replace(/^[^[]*\[/u, '').replace(/\].*$/u, '').split(',').map(name => name.trim()).filter(Boolean)
     assert.deepEqual([...new Set(names)].sort(), DISCOVERABLE, `${file} diverges from DISCOVERY_TERMS`)
+  }
+})
+
+// #408: always-loaded document readers are the documented alternative to a discovery
+// round, so the docs' cost figure is derived from the catalogue here instead of being
+// hand-copied; a reader schema or an always-loaded switch changing re-opens both docs.
+await test('the documented always-loaded document trio cost matches the catalogue', () => {
+  const wire = JSON.stringify(['read_pdf', 'read_docx', 'read_table'].map(raw => {
+    const entry = capability(raw)
+    return { name: publicToolName(raw), description: entry.description, parameters: entry.parameters }
+  }))
+  const measured = `${getEncoding('cl100k_base').encode(wire).length} tokens / ${Buffer.byteLength(wire)}`
+  for (const file of ['docs/discovery.md', 'docs/工具发现.md']) {
+    assert.ok(read(file).includes(measured), `${file} no longer states the measured ${measured} for the trio`)
+  }
+})
+
+// #300: a published checksum without its object is not a contract — the notes said
+// `SHA-256` and meant the worker in one release, the archive in the next. The docs now
+// have to name both objects, and the checker they recommend has to be a real script.
+await test('docs name the object of each published checksum and keep the checker', () => {
+  const releaseProcess = read('docs/release-process.md')
+  // Both clauses are unique to the stated contract: `SHA256SUMS` already appears as a
+  // build artifact elsewhere, so matching the word alone would stay green on a revert.
+  assert.match(releaseProcess, /authoritative in `SHA256SUMS`/u)
+  assert.match(releaseProcess, /never defines a checksum/u)
+  assert.doesNotMatch(releaseProcess, /正文为准/u)
+  for (const file of ['docs/troubleshooting.md', 'docs/常见问题.md']) {
+    assert.match(read(file), /native-runtime\.mjs check --root package --platform/u, `${file} lost the in-package checker`)
+  }
+  assert.equal(fs.existsSync(path.join(PACKAGE_ROOT, 'bin/native-runtime.mjs')), true,
+    'the checker the docs recommend no longer exists')
+})
+
+// #524: the two facts reported from a failing machine — an unmapped Windows `open`
+// error, and the Git channel — are documented as a bilingual pair, because a reader
+// who only finds the English section will re-file the same issue. The assertion is
+// deliberately structural (the same command string in both files, each in its own
+// language's words) rather than a wording check: it fails when one language loses the
+// section, and stays green through any rewrite that keeps the diagnostic entry point.
+await test('both languages document the unmapped pnpm-store error and the Git channel', () => {
+  // Tokens no honest rewrite drops: the error code the report names, the libuv text it
+  // quotes, the executable recovery step, and the reason the Git channel cannot work.
+  const anchors = ['ERR_PNPM_UNKNOWN', 'unknown error, open', 'pnpm --store-dir', 'npm run build:ptc', 'prepare']
+  for (const file of ['docs/upgrading.md', 'docs/升级与卸载.md']) {
+    const text = read(file)
+    for (const anchor of anchors) assert.ok(text.includes(anchor), `${file} lost "${anchor}"`)
   }
 })
 

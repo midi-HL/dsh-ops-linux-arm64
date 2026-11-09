@@ -41,12 +41,20 @@ artifact), the optional `@fastctx/darwin-arm64` dependency, and the CLI commands
 that resolved, built or provisioned FastCtx. No FastCtx code or binary is part of
 this distribution any more. FastCtx's Apache License 2.0 text and upstream notice
 are kept in `licenses/fastctx/`, and its required attribution is kept verbatim in
-`NOTICE` and the READMEs; the composite license statement is unchanged.
+`NOTICE` and the READMEs for the earlier versions that carried it. The current
+distribution is MIT; the composite `MIT AND Apache-2.0` statement applies only to
+those earlier FastCtx-containing releases.
 
 The sections below are records of the releases they name. Where they describe
 FastCtx, `vendor/fastctx/`, the background component, or the FastCtx payload
 package, they describe those releases, not this one; those files remain in the
 repository history and in the published tarballs of the versions that carried them.
+
+## Current target matrix (0.4.x)
+
+The current package declares `win32-x64`, `linux-x64`, `darwin-arm64` and `darwin-x64`.
+The 0.3.1 record below is historical: it shipped Apple Silicon only and did not include
+Intel. macOS 12's `CLONE_ACL` fallback is a separate follow-up; see [macOS](macos.md).
 
 ## 0.3.1 release scope and verification
 
@@ -59,8 +67,10 @@ fs-sandbox, with no-follow paths, revision checks and host subprocess governance
 Arbitrary Bash/PTC code still uses the original DSH OS confinement; Windows
 partial enforcement is reported unchanged.
 
-Windows owned workspace roots get backed-up directory-only WRITE_OWNER before
-outer run_code/pwsh launch, with no recursive grants/owner changes/denial removal.
+Windows workspace roots whose DACL already grants WRITE_OWNER are used as-is
+whatever their owner; otherwise an owned root gets a backed-up directory-only
+WRITE_OWNER before outer run_code/pwsh launch, with no recursive grants/owner
+changes/denial removal (#651).
 Restricted Bash uses an installation-relative private MSYS copy: only import DLL
 names are redirected to original MIT IPC proxies, preserving the token and disk
 API paths. Original payload/proxy/source hashes are recorded and checked.
@@ -71,6 +81,14 @@ This does not attest source-delivery closure for the historical PortableGit
 payload dependency (see the 0.2.1 historical limitation below).
 
 All three workers are staged with version/target/hash receipts. Formal release closure requires every exact target and the Windows IPC binary/source closure. Local `check --staged` is a development check, not release approval. Final verification is linked in `docs/release-0.3.1.md` and the GitHub Release; early contributor measurements are not substituted for the integrated revision. GitHub publication does not automatically publish npm.
+
+The 0.3.1 Release notes headed that asset table `Target | SHA-256` and listed the
+**worker** digest — the value `runtime/<target>/provenance.json` records — not the
+digest of the attached `native-<target>-runtime-v0.3.1.zip`; the 0.3.2 notes kept
+the same heading and listed the **ZIP** digest. Both values are meaningful and
+they cover different bytes, so comparing one against the other reports a false
+mismatch. The published bodies are left as they were; this paragraph is the
+correction, recorded here the same way as the notes-only Releases below.
 
 ## Historical development evidence
 
@@ -326,8 +344,9 @@ While FastCtx was vendored, `vendor/fastctx/UPSTREAM.md` recorded the exact
 upstream revision and `vendor/fastctx/FORK.md` every difference from it — the
 distribution machinery removed, the standalone-only code removed, and every source
 file this fork touched (each carried its own Apache-2.0 §4(b) notice at the top).
-Both remain in the repository history. The composite licensing statement is in
-`NOTICE`.
+Both remain in the repository history. Current releases are MIT-licensed; the
+composite `MIT AND Apache-2.0` statement and FastCtx's attribution apply to the
+earlier releases that carried FastCtx and are preserved in `NOTICE`.
 
 ## Distribution and binary sources
 
@@ -365,6 +384,10 @@ obtains them under.
 | `@dsh-ops/bash-win32-x64` | [Git for Windows](https://github.com/git-for-windows/git) | `v2.56.0.windows.2` | `2.56.0.2` | `PortableGit-2.56.0.2-64-bit.7z.exe` — fetched by the user, not redistributed here | 60,027,568 | `075e158ef8e1f0ab80b347e245405d3eca735c2dc88fd8e032e137d0ca61f61b` | GPL-2.0-only |
 | `@dsh-ops/pwsh-win32-x64` | [PowerShell](https://github.com/PowerShell/PowerShell) | `v7.6.6` | `7.6.6` | `PowerShell-7.6.6-win-x64.zip` — fetched by the user, not redistributed here | 106,328,873 | `02fe458be20493fbdf43f61ea20610b811ee6c738ab1676c61b9cfcd1a33c860` | MIT |
 
+The `@dsh-ops/fastctx-win32-x64` row records the 0.2.6 payload from the releases
+that carried FastCtx; that package is no longer published. The two shell pins
+below are current.
+
 The pin values live in one table — `SHELL_UPSTREAM_PINS` in `lib/shells.js`, which
 `dsh-ops provision-shells` downloads from and the release build imports when it
 publishes the pinned facts beside the packages it assembles — and the release's
@@ -382,15 +405,17 @@ that payload or pin.
 
 ### The licence each pin points at
 
-The plugin's composite statement is `MIT AND Apache-2.0`, and it covers the plugin
-alone. The two shell pins point at someone else's distribution:
+The plugin is MIT-licensed, and the current distribution contains no FastCtx
+code. The shell pins point at someone else's distribution:
 
-- **`fastctx` — this fork's Apache-2.0, plus upstream's notice.** The payload is
-  built here from `vendor/fastctx/`, so it ships `vendor/fastctx/LICENSE-APACHE` and
-  `vendor/fastctx/NOTICE`, and every source file this fork touched already carries
-  its own §4(b) change notice (`vendor/fastctx/FORK.md` is the enumeration).
-  FastCtx's required attribution is reproduced verbatim in `NOTICE` and in both
-  READMEs; that text is reproduced, never edited.
+- **`fastctx` — a historical Apache-2.0 dependency, removed in 0.3.2.** Earlier
+  releases vendored FastCtx in `vendor/fastctx/` and shipped this fork's build;
+  those releases carried FastCtx's Apache-2.0 text, upstream's notice and this
+  fork's §4(b) change notices, and every source file they touched had its own
+  §4(b) notice (`vendor/fastctx/FORK.md` is the enumeration). The FastCtx source
+  and binary are no longer part of this distribution; `licenses/fastctx/` keeps
+  the license text and upstream notice, and `NOTICE` keeps the required
+  attribution for those earlier releases.
 - **`bash` — Git for Windows' GPL-2.0.** The pin names the upstream archive and its
   digest; the download, the extraction, and the resulting copy on disk are the
   user's, and the GPL-2.0 terms (and the corresponding source, published by the Git

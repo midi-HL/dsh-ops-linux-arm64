@@ -21,6 +21,7 @@
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { resolveConfig } from '../lib/config.js'
 import { FILE_TOOLS, renderToolingPolicy, publicToolName } from '../lib/policy.js'
@@ -295,7 +296,7 @@ function assertLadder(report_) {
     ...(levels.pwsh ? ['pwsh'] : []),
   ]
   assert.equal(report_.policy, renderToolingPolicy({ published, extraGuidance: '' }))
-  assert.equal(report_.policy.includes('| General commands'), levels.bash)
+  assert.equal(report_.policy.split('\n').includes('| General Bash commands / builds / git / pipelines / scripts | ops_bash |'), levels.bash)
   assert.equal(report_.policy.includes('bundled PowerShell 7'), false, 'resolution-only CLI must not claim a mounted pwsh overlay')
 }
 
@@ -313,12 +314,12 @@ await test('ladder --json has a stable shape and lists exactly the rungs the ren
     assert.equal(run.status, 0, `expected a report, got ${run.status}: ${run.stderr}`)
     const parsed = JSON.parse(run.stdout)
 
-    assert.deepEqual(Object.keys(parsed), ['worker', 'shells', 'levels', 'rungs', 'policy'])
+    assert.deepEqual(Object.keys(parsed), ['worker', 'shells', 'bashIpc', 'levels', 'rungs', 'policy'])
     assert.deepEqual(Object.keys(parsed.worker), ['resolved', 'executable', 'source', 'error'])
     assert.deepEqual(Object.keys(parsed.shells), ['bash', 'pwsh'])
     for (const kind of ['bash', 'pwsh']) {
       assert.deepEqual(Object.keys(parsed.shells[kind]),
-        ['available', 'executable', 'source', 'detail', ...(kind === 'bash' ? ['restricted'] : [])])
+        ['available', 'executable', 'source', 'detail', ...(kind === 'bash' ? ['restricted', 'integrity'] : [])])
       assert.equal(
         parsed.shells[kind].executable === null,
         parsed.shells[kind].available === false,
@@ -327,6 +328,10 @@ await test('ladder --json has a stable shape and lists exactly the rungs the ren
       assert.equal(typeof parsed.shells[kind].detail, 'string')
     }
     assert.deepEqual(Object.keys(parsed.levels), ['files', 'bash', 'pwsh'])
+    assert.deepEqual(Object.keys(parsed.bashIpc),
+      ['root', 'current', 'generations', 'entries', 'totalBytes', 'reclaimableBytes'])
+    assert.equal(parsed.bashIpc.generations, 0, 'a fresh home has no private Bash runtime')
+    assert.equal(parsed.bashIpc.totalBytes, 0)
 
     assert.equal(parsed.worker.resolved, true)
     assert.equal(parsed.worker.executable, runtime, 'the configured path is reported verbatim')
@@ -350,6 +355,7 @@ await test('ladder --json has a stable shape and lists exactly the rungs the ren
     assert.deepEqual(printedRungs(human.stdout), parsed.rungs)
     assert.ok(human.stdout.includes(runtime), 'the report names the executable')
     assert.match(human.stdout, /^Native worker \(file tools\)$/mu)
+    assert.match(human.stdout, /^Bash IPC runtime cache/mu)
     assert.equal(human.stdout.includes('FastCtx'), false, 'the ladder no longer reports a FastCtx runtime')
 
     // A worker the configuration names but that does not exist is a missing file rung, with the resolver's reason.
@@ -413,7 +419,7 @@ await test('a shell the deployment does not have is reported as missing, with th
 
     const resolved = resolveShells(resolveConfig(config), { env })
     for (const kind of ['bash', 'pwsh']) {
-      const { restricted, ...rung } = parsed.shells[kind]
+      const { restricted, integrity, ...rung } = parsed.shells[kind]
       assert.deepEqual(rung, {
         available: resolved[kind].available,
         executable: resolved[kind].file ?? null,
@@ -421,6 +427,7 @@ await test('a shell the deployment does not have is reported as missing, with th
         detail: resolved[kind].detail,
       }, `the report and the resolver disagree about ${kind}`)
       if (kind === 'bash') assert.equal(restricted === null, !resolved.bash.available, 'restricted is reported exactly for a resolved bash')
+      if (kind === 'bash') assert.ok(['complete', 'partial', 'not-applicable'].includes(integrity.status))
       if (resolved[kind].source === 'missing') {
         assert.equal(parsed.shells[kind].executable, null)
         assert.match(human.stdout, /executable: missing/u)
@@ -608,6 +615,54 @@ await test('provision-shells refuses bytes that do not match the pin, and keeps 
     assert.equal(fs.existsSync(kept), true, `the kept file is really there: ${kept}`)
     assert.equal(sha256Of(kept), sha256Of(asset), 'the kept file is the downloaded one')
     assert.equal(fs.existsSync(path.join(home, 'dsh-ops', 'shells', 'pwsh', '0.0.1')), false, 'nothing was installed')
+  })
+})
+
+await test('a second provision run reclaims the download the first failure kept, and says how many bytes', async () => {
+  const name = 'a second provision run reclaims the download the first failure kept, and says how many bytes'
+  if (skipUnpinnedHost(name)) return
+  await withTempDir('provision-reclaim-kept', (dir) => {
+    const home = path.join(dir, 'home')
+    const user = path.join(dir, 'user')
+    fs.mkdirSync(home, { recursive: true })
+    fs.mkdirSync(user, { recursive: true })
+    // Seed what an earlier failed provision leaves behind: a kept download at the
+    // canonical temporary root and the durable record that owns it.
+    const sha = 'c'.repeat(64)
+    const scratch = path.join(fs.realpathSync.native(os.tmpdir()), 'dsh-ops-pwsh-reclaimseed')
+    fs.mkdirSync(scratch, { recursive: true })
+    fs.writeFileSync(path.join(scratch, 'payload.bin'), Buffer.alloc(2048))
+    const pending = path.join(home, 'dsh-ops', 'pending')
+    fs.mkdirSync(pending, { recursive: true })
+    const record = path.join(pending, 'pwsh-' + sha.slice(0, 12) + '.json')
+    fs.writeFileSync(record, JSON.stringify({
+      version: 1, kind: 'pwsh', pinSha256: sha, scratch, bytes: 2048,
+      reason: 'the downloaded archive did not match the pinned sha256',
+      at: new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString(),
+    }, null, 2))
+    try {
+      // The same failing provision the retention test above uses: the bytes stay for
+      // diagnosis, while the record seeded eight days ago is outside the age budget.
+      const asset = seedFile(path.join(dir, 'assets', 'forged-pwsh.zip'), 'not the pinned bytes\n')
+      const pin = unreachablePin({ url: new URL('file:///' + asset.replace(/\\/g, '/')).href, sha256: 'b'.repeat(64) })
+      const run = runCli({ home, user, command: 'provision-shells', args: ['--pwsh', '--pin', writePin(dir, pin)] })
+      assert.equal(run.status, 1)
+      assert.match(run.stdout, /reclaimed 1 kept download/u, run.stdout + run.stderr)
+      assert.match(run.stdout, /2\.0 kB/u, 'the report names the bytes it freed')
+      assert.equal(fs.existsSync(scratch), false, 'the registered download is gone')
+      assert.equal(fs.existsSync(record), false, 'its record is gone too')
+    } finally {
+      fs.rmSync(scratch, { recursive: true, force: true })
+      // The failed run above keeps its own download by design; remove the copy this
+      // suite just caused so the throwaway home is the only thing left to clean.
+      const kept = path.join(home, 'dsh-ops', 'pending')
+      for (const entry of fs.existsSync(kept) ? fs.readdirSync(kept) : []) {
+        try {
+          const record = JSON.parse(fs.readFileSync(path.join(kept, entry), 'utf8'))
+          if (typeof record.scratch === 'string') fs.rmSync(record.scratch, { recursive: true, force: true })
+        } catch { /* the record this test seeded is already gone */ }
+      }
+    }
   })
 })
 

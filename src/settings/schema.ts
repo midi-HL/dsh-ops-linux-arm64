@@ -3,12 +3,12 @@
  * the loader must remount these components instead of assuming Schemastery refs.
  */
 export type Field = {
-  type: 'string' | 'boolean' | 'number' | 'array' | 'object'
+  type: 'string' | 'boolean' | 'number' | 'array' | 'object' | 'dict'
   meta?: { volatile?: boolean; description?: string }
   inner?: Field
   dict?: Record<string, Field>
 }
-interface Descriptor extends Field {
+export interface Descriptor extends Field {
   meta: NonNullable<Field['meta']>
   inner?: Descriptor
   dict?: Record<string, Descriptor>

@@ -22,6 +22,16 @@ forbid unsafe Rust. Replacement keeps its observation locks until publication se
 batch execution persists the unknown state before filesystem effects. Read-only file calls do
 not create audit storage.
 
+Windows create-only writes keep their staging file private until all bytes are written. Before
+publication, Windows computes the new file's DACL from the held parent and current process token,
+including inherited denies, creator-owner mapping and token defaults. The computed DACL is applied
+and verified without adding a creator full-control exception; failure discards staging instead of
+publishing a guessed ACL. Overwrites and copies continue to restore the source descriptor, and
+private result-cache objects keep their separate protected ACL. This does not repair older files'
+permissions automatically; those require deliberate permission review.
+The held publication handle excludes write sharing until it closes, so expanding/restoring the
+final DACL cannot admit a competing writer between byte preparation and publication.
+
 Run `cargo test --workspace --locked --manifest-path native/Cargo.toml` to include the tests
 moved into the new crates. `npm run build:ptc` still produces the same worker path. Published
 packages include `native/crates/` and both metadata adapters so installed source builds work.
@@ -48,6 +58,11 @@ for 0.3.x benchmark comparisons, with the same authority checks and bounded defa
 Any envelope marker selects strict v1 decoding: partial envelopes, unknown fields, invalid IDs,
 unsupported components/versions and unusable budgets are rejected before filesystem effects.
 Request IDs do not change result hashes. Automatic output spill is described below.
+
+## Filesystem error codes
+
+- `LOCK_UNSUPPORTED` — the filesystem cannot provide the update lock a write path requires. Nothing was changed, and retrying cannot add lock support: use a local drive or the shell for that filesystem.
+- `PATH_CHANGED` — a directory's identity changed while it was enumerated. No complete or partial result is available; restart the query. UNC shares are enumerated through the validated display path, so a share directory replaced during the walk fails the whole call instead of returning a possibly empty result reported as complete.
 
 ## Session snapshot references (6a/16)
 
@@ -91,8 +106,30 @@ accepts no other arguments. It removes only validated snapshot/stage names for t
 the lock inode, directories and unknown/audit names. It returns `removed`, `retained`, `complete`
 and `effectState`; partial cleanup failures identify prior effects. Readonly purge is refused.
 The host must first invalidate references logically and await active calls; a denied or interrupted
-purge is deferred cleanup, never a reason to rerun business operations. Host lifecycle hooks are
-attached by the host integration slice.
+purge is deferred cleanup, never a reason to rerun business operations. A failed purge records the
+root in a private pending ledger under the temporary directory (bounded attempts, last reason, boot
+id) and is retried when workspace-write authority returns, at the next start-up or through
+`dsh-ops result-cache reclaim --apply`; nothing is removed while the host stays read-only. Because
+the purge keeps the root, the scope directory and the lock, a host-side sweep reclaims idle
+structural leftovers at start-up and after the last owner unloads: it validates the name, the owner,
+the private mode, single-link files and the complete content whitelist, skips and reports a root
+with an unknown entry, excludes this process's live roots, honors `resultCache.maxAgeMs` and stops
+at the first failed removal. Aggregate root/byte budgets (`resultCache.maxRoots`,
+`resultCache.maxTotalBytes`) default to 0 and only classify roots as blocked; the sweep never
+removes a root that still holds snapshot data, which only the authorized purge path may reclaim.
+Host lifecycle hooks are attached by the host integration slice.
+
+## Index cache directory (PS3, #601)
+
+The optional trusted request field `cache_dir` names the host-created directory where the worker may
+persist the platform-agnostic name-index snapshot. It is neither a tool argument nor the
+result-storage root above. Absent means the index is disabled and every caller keeps the existing
+walk. When present it must be an absolute path of 1..4096 bytes that the host created private to the
+user (0700 on POSIX, for example `<DSH_HOME>/dsh-ops/index-cache`); the worker never creates or
+widens it. A cache failure is never a request error: an unwritable, full or corrupt directory falls
+back to the walk, so output stays byte-identical to today's behaviour. Uninstall removes the
+snapshot store (`index.snapshot`, temporary files and the lock file) and leaves the host's
+`dsh-ops` directory in place.
 
 ## Automatic bounded output spill (6b/16)
 
@@ -241,7 +278,10 @@ xref table, an exact final startxref/EOF footer, unique dictionary keys and obje
 identities, and directly declared stream lengths. Every active xref offset must point
 exactly at its object header. Objects cannot overlap; gaps must contain only whitespace
 or comments. This deliberately rejects incremental updates, encryption, object/xref
-streams, recovery scans and ambiguous duplicate data, including decoded forbidden names.
+streams, recovery scans and ambiguous duplicate data. `/Encrypt`, `/ObjStm` and `/XRef`
+are refused wherever they appear, decoded escapes included, while `/Prev` and `/XRefStm` are
+refused only as trailer keys — the one place they denote an earlier xref section — so a
+dictionary that merely names them, such as an outline item's previous sibling, stays readable.
 
 Bounds are checked before indexed allocation: 16 MiB per input, 10,000 xref entries,
 100,000 metadata values, depth 64, 4,096 keys per dictionary, 256 bytes per name/token,

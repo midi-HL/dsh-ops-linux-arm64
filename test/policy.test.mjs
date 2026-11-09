@@ -61,15 +61,44 @@ await test('resident-only routing omits unavailable operation hints and includes
   assert.match(discovery, /next model step/)
   for (const name of files) assert.equal(discovery.includes(name), false)
 })
+// #408: the document readers are only reachable through discovery, so the only routing
+// sentence a model sees before selecting them has to state the document case it can
+// evaluate, and has to concede Office authoring to the host skill that competes for it.
+// Naming formats rather than tools keeps an unpublished reader unadvertised.
+await test('discovery routing names the document case and the Office-authoring boundary (#408)', () => {
+  const text = renderToolingPolicy({ published: [publicToolName('discover_tools')], shellComponent: false })
+  assert.match(text, /- Discover a capability when a task needs a reader for a `\.pdf`, `\.docx`, `\.csv` or `\.tsv` file whose reader is absent from the tool table;/)
+  assert.match(text, /next model step and performs no file action/)
+  assert.match(text, /Creating, editing, rendering or exporting Office documents belongs to the host office skill, and a document read that fails falls back to it rather than retrying the reader/)
+  for (const name of ['ops_read_pdf', 'ops_read_docx', 'ops_read_table']) assert.equal(text.includes(name), false, `${name} is a format example, never an advertisement`)
+  // The document case exists only where discovery itself is published.
+  const residentOnly = renderToolingPolicy({ published: [publicToolName('read_files')], shellComponent: false })
+  assert.equal(residentOnly.includes('.pdf'), false)
+  assert.equal(residentOnly.includes('office skill'), false)
+})
 await test('shell routing prefers bash and leaves PowerShell ownership with the host', () => {
   const text = renderToolingPolicy({ published: [BASH_TOOL, 'pwsh'] })
-  assert.match(text, /^# Shell routing: bash → host PowerShell/)
+  assert.match(text, new RegExp(`^# Bash command execution: ${BASH_TOOL}`))
   assert.match(text, /pwsh \(host PowerShell\)/)
-  assert.equal(text.includes('bundled'), false)
-  assert.match(text, /fix bash errors in bash, do not switch shells/)
+  const bashOnly = renderToolingPolicy({ published: [BASH_TOOL] })
+  assert.match(bashOnly, /No host pwsh tool is visible/)
+  assert.doesNotMatch(bashOnly, /host PowerShell|pwsh \(/)
+  assert.match(text, /Fix ops_bash errors in ops_bash; do not mix shell syntax/i)
   assert.match(text, /longer than about 1 KB.*script_path/)
   assert.equal(renderToolingPolicy({ published: ['pwsh'] }).includes('bundled PowerShell'), false)
   assert.equal(renderToolingPolicy({ published: ['pwsh'], shellComponent: false }), '')
+})
+// #298: the model called `bash` 15 times in one session and got `unknown tool`
+// each time, because the prompt named the shell `bash` while the registry only
+// publishes `ops_bash`. `\bbash\b` cannot match `ops_bash` — an underscore is a
+// word character — so a match here is a bare name the registry never publishes.
+await test('the tooling policy never names a shell the registry does not publish', () => {
+  const text = renderToolingPolicy({ published: [BASH_TOOL, 'pwsh'], extraGuidance: '' })
+  assert.match(text, /Fix ops_bash errors in ops_bash; do not mix shell syntax/i)
+  assert.doesNotMatch(text, /\|\s*bash\s*\|/i, 'prompt must name the published ops_bash tool, not a bare tool name')
+  // Without the shell published, nothing names a shell at all.
+  const fileOnly = renderToolingPolicy({ published: files, shellComponent: false })
+  assert.equal(/\bbash\b/i.test(fileOnly), false)
 })
 await test('the removed background tools are never advertised, even if a registry still lists them', () => {
   assert.equal(renderToolingPolicy({ published: removed, shellComponent: false }), '')

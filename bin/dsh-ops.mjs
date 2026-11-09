@@ -23,9 +23,11 @@ import { commandLadder } from '../lib/cli/report.js'
 import { commandProvisionShells } from '../lib/cli/provision-shells.js'
 import { commandUpgradeHostPwsh } from '../lib/cli/pwsh-upgrade.js'
 import { commandBashRuntime } from '../lib/cli/bash-runtime.js'
+import { commandResultCache } from '../lib/cli/result-cache.js'
+import { CACHE_KINDS, commandCache } from '../lib/cli/cache-reclaim.js'
 import { commandUninstall } from '../lib/cli/uninstall.js'
-import { commandSettingsProfile } from '../lib/cli/settings-profile.js'
 import { commandPanel } from '../lib/cli/panel.js'
+import { commandDisk } from '../lib/cli/disk.js'
 
 /**
  * Print one usage block.
@@ -41,28 +43,50 @@ Usage:
                                   Remove the profile plugin and its binary dependency references
   dsh-ops status --profile <desktop|web|tui>
                                   Report target-profile installation (tui maps to dsh-tui)
-  dsh-ops settings-profile --profile-dir <dir> --host-anchor <host package.json> [--dsh-home <dir>] [--offline --yes]
-                                  Preview or explicitly enable the optional browser settings carrier
-  dsh-ops build-ptc              Build the independent native Rust worker (all platforms)
+  dsh-ops build-ptc [--target <rust-triple>]
+                                  Build the independent native Rust worker (all platforms).
+                                  --target stages a cross build from native/target/<rust-triple>/release,
+                                  e.g. x86_64-unknown-linux-musl for a static Linux x64 worker.
+  dsh-ops review snapshot --repo <owner/name> --prs <1,2> [--base main] [--checkout <path>]
+                                  Collect bounded PR/CI evidence; optionally probe local commit objects
   dsh-ops uninstall [--yes] [--purge-fastctx]
                                   Report files older versions left under <DSH_HOME>/dsh-ops and,
                                   with --yes, remove them; --purge-fastctx also removes leftover
                                   ~/.fastctx state from the removed background component
   dsh-ops ladder [--json] [--config <file>]
                                   Report the native worker, both shells, and the rungs the
-                                  prompt ladder actually renders; nothing is spawned
+                                  prompt ladder renders; Windows labels are inspected read-only
+  dsh-ops disk status [--json] [--config <file>]
+                                  Report every disk resource OPS may create: owner, category,
+                                  bytes, age and why it is or is not reclaimable. Read-only; deletes nothing
   dsh-ops panel [--serve] [dir] [--port <n>]
                                   Serve the panel viewer and capture reports over loopback
                                   (default: ./.dsh-ops/panel, latest session preselected)
   dsh-ops provision-shells [--bash] [--pwsh] [--force] [--dry-run] [--pin <file>]
                                   Download the pinned upstream bash and/or PowerShell 7, verify
                                   their digests, and install them under <DSH_HOME>/dsh-ops/shells
-  dsh-ops bash-runtime [status|install|remove|git|managed] [--yes] [--dry-run]
-                                  Manage optional Bash; git/managed prints a bashPath selection
-                                  for the host config editor. remove previews unless --yes.
+  dsh-ops bash-runtime [status|install|remove|git|niubash|clean-cache|spill-report] [--path <exe>] [--yes] [--dry-run]
+                                  Manage optional Bash; install provisions the pinned Niubash
+                                  payload. git/niubash print the bashPath facts for the host
+                                  config editor (git also takes --path).
+                                  remove previews unless --yes.
+                                  clean-cache previews old private runtime generations; apply only
+                                  after stopping all OPS hosts with --yes --all-hosts-stopped.
+                                  spill-report reports the ledger of host spill files; preview
+                                  deletions unless --sweep --yes. --json prints the raw report.
+  dsh-ops result-cache [status|reclaim] [--apply] [--json] [--config <file>]
+                                  Report result-cache roots under the temp directory; reclaim
+                                  previews unless --apply. Stop every OPS host before applying.
   dsh-ops upgrade-host-pwsh [--yes] [--dry-run]
                                   Preview/run standard Windows PowerShell 7 installation through
                                   WinGet. Restart DSH; custom host pwshPath remains authoritative.
+  dsh-ops cache <status|reclaim> [--yes --all-hosts-stopped] [--kind <kind>]... [--root <dir>]... [--json]
+                                  Report (status) the temporary resources OPS can reproduce: kept
+                                  provision downloads, Niubash staging siblings, quarantined Bash IPC
+                                  generations, audit-store writer temporaries and per-call Niubash
+                                  execution trees. reclaim previews by default and deletes only with
+                                  --yes after every host and shell stopped. Kinds:
+                                  ${CACHE_KINDS.join(", ")}; --root names an audit-store root.
   dsh-ops help                    This text
 
 Environment:
@@ -96,6 +120,7 @@ const REMOVED_COMMANDS = Object.freeze({
  * @returns {Promise<number>} the exit code.
  */
 async function main() {
+  if (process.argv[2] === 'review') return (await import('../lib/review/cli.js')).commandReview(process.argv.slice(3))
   const { values, positionals } = parseArgs({
     args: process.argv.slice(2),
     allowPositionals: true,
@@ -109,18 +134,25 @@ async function main() {
       force: { type: 'boolean', default: false },
       yes: { type: 'boolean', default: false },
       'purge-fastctx': { type: 'boolean', default: false },
+      'all-hosts-stopped': { type: 'boolean', default: false },
       'dry-run': { type: 'boolean', default: false },
+      apply: { type: 'boolean', default: false },
       json: { type: 'boolean', default: false },
       config: { type: 'string' },
       bash: { type: 'boolean', default: false },
       pwsh: { type: 'boolean', default: false },
       pin: { type: 'string' },
+      path: { type: 'string' },
       serve: { type: 'boolean', default: false },
       port: { type: 'string' },
+      target: { type: 'string' },
+      sweep: { type: 'boolean', default: false },
+      kind: { type: 'string', multiple: true },
+      root: { type: 'string', multiple: true },
     },
   })
   const command = positionals[0] ?? 'help'
-  if (positionals.length > (command === 'bash-runtime' || command === 'panel' ? 2 : 1)) throw new Error('Unexpected positional arguments.')
+  if (positionals.length > (['bash-runtime', 'panel', 'disk', 'cache', 'result-cache'].includes(command) ? 2 : 1)) throw new Error('Unexpected positional arguments.')
   // Declared globally so `panel --serve` parses, but it is meaningful for that command only.
   if (values.serve === true && command !== 'panel') throw new Error('--serve only applies to the panel command.')
   if (command === 'install' || (['uninstall', 'status'].includes(command) && values.profile !== undefined)) {
@@ -131,14 +163,16 @@ async function main() {
     return 2
   }
   switch (command) {
-    case 'settings-profile':
-      return commandSettingsProfile({ profileDir: values['profile-dir'], hostAnchor: values['host-anchor'], home: values['dsh-home'], yes: values.yes, offline: values.offline, dryRun: values['dry-run'] })
     case 'upgrade-host-pwsh':
       return commandUpgradeHostPwsh({ yes: values.yes, dryRun: values['dry-run'] })
+    case 'result-cache':
+      return commandResultCache(positionals[1], { apply: values.apply === true, json: values.json === true, configFile: values.config })
     case 'bash-runtime':
-      return commandBashRuntime(positionals[1], { yes: values.yes, dryRun: values['dry-run'], force: values.force, configFile: values.config })
+      return commandBashRuntime(positionals[1], { yes: values.yes, dryRun: values['dry-run'], force: values.force, configFile: values.config, path: values.path, allHostsStopped: values['all-hosts-stopped'], json: values.json === true, sweep: values.sweep === true })
     case 'ladder':
       return commandLadder({ json: values.json === true, configFile: values.config })
+    case 'disk':
+      return commandDisk({ action: positionals[1], json: values.json === true, configFile: values.config })
     case 'panel': {
       const port = values.port === undefined ? 0 : Number(values.port)
       if (!Number.isSafeInteger(port) || port < 0 || port > 65535) throw new Error(`--port must be an integer from 0 to 65535, got ${JSON.stringify(values.port)}`)
@@ -147,9 +181,19 @@ async function main() {
     case 'build-ptc': {
       const cargo = findCargo()
       console.log(`toolchain: ${cargo.version}`)
-      const result = await cargoBuild({ cargo, sourceDir: path.join(PACKAGE_ROOT, 'native'), onLine: line => console.log(line) })
+      const target = values.target
+      // Reject path syntax early: the triple becomes a native/target/ child directory.
+      if (target !== undefined && (target.trim() === '' || /[\\/]/.test(target))) {
+        throw new Error(`--target must be a Rust target triple such as x86_64-unknown-linux-musl, got ${JSON.stringify(target)}`)
+      }
+      const extraArgs = target === undefined ? [] : ['--target', target]
+      const result = await cargoBuild({ cargo, sourceDir: path.join(PACKAGE_ROOT, 'native'), extraArgs, onLine: line => console.log(line) })
       if (result.code !== 0) return result.code
-      const staged = spawnSync(process.execPath, [path.join(PACKAGE_ROOT, 'bin/native-runtime.mjs'), 'stage', '--platform', `${process.platform}-${process.arch}`], { stdio: 'inherit', windowsHide: true })
+      // A --target build lands in native/target/<triple>/release; the plain host build stays in native/target/release.
+      // Both stage under this host's platform: --target selects a different ABI/libc for the same host, not another platform.
+      const input = target === undefined ? undefined : path.join(PACKAGE_ROOT, 'native', 'target', target, 'release')
+      const stageArgs = [path.join(PACKAGE_ROOT, 'bin/native-runtime.mjs'), 'stage', '--platform', `${process.platform}-${process.arch}`, ...(input === undefined ? [] : ['--input', input])]
+      const staged = spawnSync(process.execPath, stageArgs, { stdio: 'inherit', windowsHide: true })
       if (staged.error) throw staged.error
       return staged.status ?? 1
     }
@@ -169,6 +213,15 @@ async function main() {
         pinFile: values.pin,
       })
     }
+    case 'cache':
+      return commandCache(positionals[1] ?? 'status', {
+        yes: values.yes === true,
+        dryRun: values['dry-run'] === true,
+        allHostsStopped: values['all-hosts-stopped'] === true,
+        kinds: values.kind,
+        roots: values.root,
+        json: values.json === true,
+      })
     case 'uninstall':
       return commandUninstall({
         yes: values.yes === true,

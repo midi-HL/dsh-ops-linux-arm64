@@ -50,14 +50,20 @@ await test('the real Cordis loader consumes the component Standard Schema valida
     assert.match(error.issues[0].message, /unsupported tool: "write"/)
   } finally { await ctx.fiber.dispose() }
 })
-await test('the disabled component patch also defaults to an empty selection', () => {
+await test('the merged row declares per-preset replacement preferences without a Compatibility row', () => {
   const document = parse(fs.readFileSync(path.join(PACKAGE_ROOT, 'cordis.patch.yml'), 'utf8'), {
     customTags: [{ tag: 'tag:yaml.org,2002:js', resolve: value => value }],
   })
-  const hiding = document.flatMap(item => item.insert).find(row => row.name === 'dsh-ops/hide-official')
-  assert.equal(hiding.disabled, true)
-  assert.deepEqual(hiding.config, { replaceTools: [] })
-  assert.deepEqual(resolveHidingConfig(hiding.config), { replaceTools: [] })
+  const rows = document.flatMap(item => item.insert)
+  // The legacy hide-official row is no longer inserted; Compatibility is one
+  // switch, so the bundle must not carry a per-tool replacement selection.
+  assert.equal(rows.some(row => row.name === 'dsh-ops/hide-official'), false)
+  assert.equal(rows.some(row => row.id === 'dsh-ops-compat'), false)
+  const merged = rows.find(row => row.id === 'dsh-ops')
+  assert.ok(merged)
+  assert.equal(merged.config.global.hideOfficialTools, true)
+  assert.equal(Object.hasOwn(merged.config, 'replaceTools'), false, 'the bundle selects no blanket per-tool replacements')
+  assert.deepEqual(resolveHidingConfig({ replaceTools: [] }), { replaceTools: [] }, 'the retained legacy validator still resolves an empty selection')
   for (const platform of ['win32', 'linux', 'darwin']) {
     assert.deepEqual(platformSurface(platform), { retainedCommand: platform === 'win32' ? 'pwsh' : 'bash', shellDefaultEnabled: true })
   }
@@ -76,5 +82,8 @@ await test('both component references list the reviewed mappings and explain del
     for (const term of ['replaceTools', 'expectedRevision', 'CAS', 'Rust', 'ripgrep', 'StandardSchemaV1']) assert.ok(text.includes(term), file + ': ' + term)
   }
 })
+// The snapshot key is pinned behaviourally by `officialToolHidingMountChecks` below and its
+// shape by `ptc-surface.test.mjs`; a source-text match here would only add a way to break on
+// reformatting, without catching a regression those two miss.
 await officialToolHidingMountChecks()
 report('official-tool-hiding')

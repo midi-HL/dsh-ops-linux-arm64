@@ -15,7 +15,7 @@ node bench/cli.mjs gates --baseline-source baseline-031 --baseline-worker baseli
 
 On Windows append `.exe` to the baseline worker. To measure the complete Bash surface, first install an optional fixture into a dedicated temporary `DSH_HOME` with `node bin/dsh-ops.mjs bash-runtime install`, then set `DSH_OPS_TEST_BASH` to its validated absolute executable (the release gate uses the same fixture API). The benchmark records this explicit selection; it changes no schema options. A fresh home without an installed Bash correctly blocks BM-03 instead of counting only the file schemas. The manual workflow acquires this fixture explicitly. Use a new output filename for each run. The command refuses to overwrite either JSON evidence or its `.md` summary. It retains its exclusively owned temporary fixture directory for inspection. `--task BM-02` selects one gate; selected success never means that all five passed. Any failed or unavailable selected gate exits 1; malformed arguments or missing build inputs exit 2.
 
-The manual `Opt-in OPS acceptance benchmarks` workflow runs the same command on Windows x64, Linux x64 and Apple Silicon, independently builds the baseline, and uploads both artifacts even when a gate fails. It changes no default CI requirement and uses no model credentials.
+The manual `Opt-in OPS acceptance benchmarks` workflow runs the same command on Windows x64, Linux x64 and Apple Silicon, independently builds the baseline, and uploads both artifacts even when a gate fails. The functional CI and release matrix also cover macOS Intel (`darwin-x64`), but the opt-in benchmark sweep does not include it yet. It changes no default CI requirement and uses no model credentials.
 
 ## Fixed workloads and comparisons
 
@@ -37,7 +37,7 @@ The 0.3.1 baseline is commit `4b51b6333213c376c8b7c173c12f35b408fdec2d`. The pre
 
 The user confirmed OPS 0.3.x as BM-01's authoritative comparison and retained the original DSH reader as a separate comparison. BM-03 keeps Bash loaded at startup and applies the unchanged 400-token threshold to file/discovery schemas only. The full default schema total and startup message JSON remain visible. Exact inventory checks still block a missing Bash on Windows, even when the file/discovery subset fits the budget. No tool contracts, defaults, source text, workload or numerical thresholds are removed or relaxed.
 
-The actual file/discovery definitions measure 242 tokens / 1,101 bytes. The previously captured complete Windows provider surface measures 660 tokens / 3,219 bytes; the different fixture order is 661 tokens with identical bytes. The complete surface does not fit 400 and is not described as doing so. A fresh integrated run is required for current acceptance; historical artifacts below keep their original verdicts.
+The current file/discovery definitions measure 261 tokens / 1,196 bytes; the complete current Windows fixture is 697 tokens / 3,408 bytes. The previously captured complete Windows provider surface measures 660 tokens / 3,219 bytes; the different fixture order is 661 tokens with identical bytes. The complete surface does not fit 400 and is not described as doing so. A fresh integrated run is required for current acceptance; historical artifacts below keep their original verdicts.
 
 ## Honest limits and retained results
 

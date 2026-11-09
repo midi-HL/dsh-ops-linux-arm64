@@ -1,6 +1,13 @@
 # Troubleshooting
 
+## PowerShell ConstrainedLanguage blocks workspace preparation
+
+On a Windows host with ConstrainedLanguage enforced, the trusted workspace preparation script cannot use the identity and DACL APIs it needs. OPS now reports `DSH_OPS_CONSTRAINED_LANGUAGE` before those calls, and classifies older PowerShell language-mode errors by the same cause. No ACL preparation was completed; restricted commands remain blocked at that prerequisite. This diagnostic does not change the language policy, session permissions, or confinement. Ask the host administrator for a supported preparation path; `-ExecutionPolicy Bypass` does not remove ConstrainedLanguage restrictions. Ordinary file reads that do not require this preparation keep their existing policy path.
+
 Start here when installation fails, an error is unclear, or behaviour is unexpected.
+
+For Windows Low-integrity, MSYS startup, antivirus, heredoc or approval reports,
+collect [runtime evidence](windows-runtime-evidence.md) before assigning a cause.
 
 ---
 
@@ -46,6 +53,20 @@ The provisioned copy lives in `<DSH_HOME>/dsh-ops/shells` (shared across profile
 
 When the bundled bash payload remains declared in the profile lockfile but its package directory has been removed by the host package manager, `ops_bash` returns a readable `ENOENT` diagnostic instead of exposing a raw `spawn` exception to the model. Restore the dependency with the profile's frozen install or official plugin manager; it does not silently switch to an unauthorized system bash.
 
+### How do I verify what I downloaded from a Release
+
+Two checksums are involved and they cover different bytes: `SHA256SUMS` lists the released tarballs, while each tarball records the digest of the native worker it contains in `runtime/<target>/provenance.json`. Neither value is defined by the Release body.
+
+The tarball ships its own checker, so no platform-specific hashing tool is needed:
+
+```console
+tar -xzf dsh-ops-<version>.tgz
+node package/bin/native-runtime.mjs check --root package --platform win32-x64
+# win32-x64: <bytes> bytes, sha256 <digest>
+```
+
+That digest is the one `package/runtime/<target>/provenance.json` holds. Run `tar` from inside the download directory with the bare file name: Git for Windows ships GNU tar, which reads a `C:\...` argument as a remote host. `SHA256SUMS` covers every tarball of that release — including the Windows Bash payload — so `sha256sum -c SHA256SUMS` only passes when all of them sit side by side; macOS has no `sha256sum` and uses `shasum -a 256 -c SHA256SUMS`.
+
 ---
 
 ## Command execution
@@ -62,6 +83,20 @@ Long scripts, heredocs and multi-layer quotes and backslashes make the model esc
 
 A key the `ops_bash` schema does not declare is refused before execution, and the error names both the unknown keys and the accepted ones. This is deliberate — nothing is silently ignored.
 
+### Bash script files, PATH precedence and empty input
+
+`script_path` always selects a Bash script; the extension does not select an
+interpreter. Run PowerShell scripts through the host's `pwsh` tool instead.
+The private Windows runtime keeps its matching `usr/bin` first in the child
+PATH, then searches the caller's PATH before its optional `ucrt64/bin` and `cmd`
+programs. This retains caller-installed Git/curl versions where the required
+MSYS directory does not provide the same command. The system PATH is unchanged.
+
+Bash receives an immediately closed empty input pipe rather than the Windows
+NUL device. Programs still see EOF, including scripts and commands that read
+stdin; this avoids the reported MSYS fd-0 device initialization condition
+(#372 section 1) without changing sandbox permissions.
+
 ### `ops_bash` cannot run a custom bashPath or Git for Windows in restricted modes
 
 Symptom, in a read-only or workspace-write session: `EXECUTOR_UNAVAILABLE: ops_bash cannot run the configured bashPath … in restricted modes` (0.3.0 printed `This MSYS version has no verified DSH IPC compatibility build. Rebuild the matching proxies`).
@@ -70,13 +105,108 @@ Symptom, in a read-only or workspace-write session: `EXECUTOR_UNAVAILABLE: ops_b
 
 What to do:
 
-- Remove `bashPath` (and `allowSystemShellFallback`) from the `dsh-ops/shell` row so the bundled pinned bash is used; if that payload is missing, run `npx --yes dsh-ops@latest provision-shells --bash`.
+- Remove `bashPath` (and `allowSystemShellFallback`) from the mode row so the bundled pinned bash is used; if that payload is missing, run `npx --yes dsh-ops@latest provision-shells --bash`.
 - Or switch the session to `danger-full-access`, where `bashPath` runs directly.
 - Check with the profile's own copy: `node "<profile>\node_modules\dsh-ops\bin\dsh-ops.mjs" ladder --config <file>` reports `restricted: yes/no` for the resolved bash.
+
+### Restricted Bash is still preparing, or its last preparation was interrupted
+
+Symptom, in a read-only or workspace-write session: an `EXECUTOR_UNAVAILABLE` whose second segment names a stage, for example `EXECUTOR_UNAVAILABLE: bash-staging-failed: …`, `bash-generation-quarantine-failed: …` or `bash-lifecycle-lock-busy: …`.
+
+Restricted calls run the pinned Bash from a private, verified copy under `<DSH_HOME>/dsh-ops/bash-ipc/<identity>`. The first confined call stages it (about 10 seconds for the 412 MB payload); later calls reuse it. The stage name says whether another call can help:
+
+- `bash-staging-failed` — the copy did not finish (an interrupted host, antivirus holding the freshly written tree, a full disk). The next call stages a fresh copy, so retry once; if it repeats, stop every confined shell and run `dsh-ops bash-runtime clean-cache --yes --all-hosts-stopped`, then retry.
+- `bash-generation-quarantine-failed` — an unverifiable generation is still in use. Stop the confined shells that may own it, then retry; the retry quarantines it and stages a fresh copy.
+- `bash-lifecycle-lock-busy (<pid>)` — a host died while holding `<DSH_HOME>/dsh-ops/bash-ipc/.ops-lifecycle-lock`. The lock is never stolen from an owner that may still be alive. Stop every OPS host and confined shell, run `dsh-ops bash-runtime clean-cache --yes --all-hosts-stopped`, then retry.
+- `bash-runtime-missing` / `bash-ipc-mismatch` — the pinned payload or the IPC compatibility receipt is absent or changed. Restore the profile dependencies or run `dsh-ops provision-shells --bash`; a retry cannot repair these.
+
+An interrupted staging leaves a `stage-*` directory in the cache. Confined calls reclaim copies older than one hour automatically (the reported reclaimable bytes include them), `clean-cache --yes --all-hosts-stopped` removes all of them, and deleting them by hand while no confined shell is running is equally safe.
+
+### Windows Bash staging is slow, antivirus scans it, or the payload looks read-only
+
+Each Windows `ops_bash` call now clones the verified Niubash payload by hardlink below
+`%TEMP%\dsh-ops-niu-exec-*` and seals the shared inodes read-only for the duration of the command.
+No payload data is copied, so the clone costs metadata only; the pre-spawn check compares the path
+set, sizes, directory set, read-only seal and stable file identities instead of re-hashing 1.85 GiB per call.
+Shared inode link counts are not invariants: other calls or hosts can add/remove aliases; private copies
+and the execution receipt still enforce their recorded counts.
+The execution receipt `execution-provenance.json` in that tree records `mode` (`hardlink` or
+`copy`), the source manifest digest and the seal level.
+
+- If a scanner is unhappy with the temporary directory, set `DSH_OPS_EXEC_ROOT` to an allow-listed
+  directory or to the payload's own volume. The root must not be inside the payload; its physical
+  path is resolved, so a junction/symlink cannot hide it. Cross-volume roots, ReFS, a filesystem
+  that refuses hardlinks, or an ACL/permission refusal trigger the whole-tree copy fallback; the
+  receipt records `"mode": "copy"`, `cloneFallbackCode` (`EXDEV`, `EPERM`, …) and
+  `cloneDiagnostics` with the first failed `link`, so a slow path is diagnosable instead of silent.
+- In 0.5.1, parallel clones could trigger `link count mismatch` without any payload corruption.
+  Upgrade to 0.5.2 or later; retrying or clearing caches cannot fix that race. Identity, size, seal
+  and receipt failures still fail closed; restore the pinned payload after investigating.
+- To remove leftovers, stop **every OPS host and Bash job**, then run the installed package's CLI
+  with the same `DSH_HOME` and `DSH_OPS_EXEC_ROOT`: `dsh-ops cache status --kind exec-tree`, followed
+  by `dsh-ops cache reclaim --kind exec-tree --all-hosts-stopped --yes`. This discovers temporary,
+  configured and default same-volume roots, validates ownership, and unseals verified trees before
+  deleting. Unknown/partial trees stay untouched. Do not recursively delete a wildcard by name,
+  or remove trees while calls are running. Reclamation does not reinstall a corrupt source.
+- The settings page can explicitly save `D:\Git\bin\bash.exe` (the missing editable field in 0.5.1
+  is fixed). This is not a generic restricted-mode workaround: only the pinned compatible MSYS
+  build can run restricted; an arbitrary Git Bash remains rejected rather than run unconfined.
+- While a command runs, the payload files are read-only (the Windows READONLY attribute plus a
+  deny-write/deny-delete ACL) and `winuxcmd.exe` with all argv0 faces share one inode. Disposal,
+  `provision-shells --force`, upgrade and `uninstall` unseal first.
+- Concurrency is scoped to **one DSH host process**. Within that process, calls that share a payload
+  defer their unseal and removal until the last live tree is released, so a finishing call cannot
+  hand a writable window to a running sibling. **Separate host processes sharing the same payload
+  are not coordinated**: while one host disposes and unseals, another host's running execution tree
+  can lose the read-only seal until that host's next clone/verification. This is a robustness
+  boundary, not a security boundary against administrators: a privileged process that can rewrite
+  ACLs or clear READONLY can still write through the hardlinks.
+- `NIUBASH_VERIFY=deep` restores the full per-call re-hash of the source payload and the clone.
+
+### A second restricted Bash fails while another Bash is still running
+
+The `CreateFileMapping S-<user SID>.<version>, Win32 error 5` failure in #363 came
+from a shared MSYS section missing the current logon SID. The IPC proxy now
+preserves that section's existing ACL and adds the same logon permission already
+used for private MSYS process trackers. This applies only to the current user's
+pagefile-backed section inside the verified MSYS object directory; filesystem
+permissions and sandbox modes are unchanged. Update to a build containing this
+fix and restart DSH after stopping its jobs. A DLL-not-found startup failure or
+an empty false-success result is a separate problem (#374 and #373).
 
 ### Bash approval is rejected or unavailable
 
 `ops_bash` uses host approval for a strictly wider `sandbox_permissions` mode. Supply a non-empty `justification` for that exact command. A rejection or missing approval service prevents execution; do not retry through another shell. Approval does not repair an incompatible restricted Bash runtime.
+
+### Desktop runs Bash without Node mode
+
+A confined Windows sandbox wraps the command as `[process.execPath, …/runner.js, …argv]`, so an
+Electron host hands OPS its own Desktop executable as the Node runner. Without
+`ELECTRON_RUN_AS_NODE=1` that relaunches the single-instance application, which can exit 0 without
+running Bash (#484). For a self-runner — a prepared argv whose first element resolves to the
+Desktop executable — OPS now supplies the variable before spawning: argv, policy and sandbox are
+unchanged, and only a self-runner is given Node mode (#574). OPS recognises that shape by
+`argv[0]`, not by the runner's file name, so a self-runner argv that is not a Node entry now runs
+as Node instead of being refused as before; the sandbox provider is the only producer of that
+argv, and for a confined call the alternative is Bash that never starts.
+An unconfined call is not touched, a host that supplies a real Node runner keeps its own
+environment, and an explicit `ELECTRON_RUN_AS_NODE=1` is never duplicated. The variable is inherited
+by the command's own children, so an Electron application started from a confined `ops_bash` also
+runs in Node mode; the sandboxed host process tree already behaves that way, so the exposure does
+not grow. A command that legitimately exits 0 with no output remains successful.
+
+### Windows reports exit code 3221225794 or -1073741502
+
+Both values represent `STATUS_DLL_INIT_FAILED` (`0xC0000142`). OPS names this
+status and retains unknown command effects (#417). It may originate in the host
+runner, MSYS initialization, or a child process; an application can also forward
+the same exit value. The number alone cannot establish the failing layer. Inspect
+existing effects without repeating the command, and collect the host/OPS versions,
+sandbox mode, resolved executable and runner paths, and complete stderr. If the
+host's own PowerShell has the same failure, include that evidence in the host
+report. Keep sandbox and system protections enabled. This diagnostic does not
+repair token construction, DLL initialization, or a foreign MSYS shared object's ACL.
+
 ### Empty placeholder arguments on file tools
 
 Strict tool-call adapters that fill every schema field send `""`, `null` or `[]` for unused optional fields of `ops_inspect_local_file`, `ops_grep`, `ops_glob` and `ops_replace`. The plugin drops those placeholders for optional fields before the native worker runs, so they no longer trip `path`/`encoding`/`view` validation. Required fields, `replacement: ""`, `false` and `0` are forwarded unchanged, so genuinely invalid values still error.
@@ -135,14 +265,15 @@ The `dsh-ops/background` component and its FastCtx-backed tools (`ops_run`, `ops
 
 ### `DSH workspace preparation failed`
 
-Before the first restricted `run_code` / `pwsh` / `bash` / `ops_bash` call in a workspace-write session, dsh-ops gives the workspace root a directory-only `WRITE_OWNER` ACE, which the host sandbox needs. The original DACL is backed up to `<DSH_HOME>/dsh-ops/acl-backups/` first. Later calls take a fast `ready` path.
+Before the first restricted `run_code` / `pwsh` / `bash` / `ops_bash` call in a workspace-write session, dsh-ops accepts an existing effective `WRITE_OWNER` grant as-is, whatever the root's owner, or gives the workspace root a directory-only `WRITE_OWNER` ACE; either way the host sandbox gets the grant it needs. When an ACE is added, the original DACL is backed up to `<DSH_HOME>/dsh-ops/acl-backups/` first. Later calls take a fast `ready` path.
 
 This step runs the package's own `bin/prepare-workspace.ps1` with Windows PowerShell 5.1 **as the current user, before sandbox confinement applies**, only on Windows in workspace-write mode, and changes only the workspace root's own DACL. Read-only and danger-full-access sessions skip it.
 
 The message names the cause:
 
 - `PowerShell execution policy blocked dsh-ops's own preparation script …`: dsh-ops passes `-ExecutionPolicy Bypass` (earlier versions did not, so the Windows client default `Restricted` blocked every shell tool, #66). A refusal now means Group Policy (MachinePolicy/UserPolicy) enforces the policy; `Set-ExecutionPolicy -Scope CurrentUser` cannot override it. Check `powershell.exe -NoProfile -Command Get-ExecutionPolicy -List`, ask an administrator, or use danger-full-access for the session.
-- `the workspace root … does not meet the sandbox prerequisite …`: the folder itself is the problem — it is not owned by the current user, its path goes through a junction or symlink, or `WRITE_OWNER` is explicitly denied or cannot be granted. Fix the folder's owner or permissions, or open a workspace you own. This is not a DSH authorization denial.
+- `the workspace root … is not owned by the current user …`: the folder grants no effective `WRITE_OWNER` and another account owns it, so dsh-ops refuses to add that ACE outside a folder you own. A folder that already grants `WRITE_OWNER` is used as-is whatever its owner (#651). Grant `WRITE_OWNER` on that folder, take ownership of it, or use danger-full-access. This is not a DSH authorization denial.
+- `the workspace root … does not meet the sandbox prerequisite …`: the folder itself is the problem — its path goes through a junction or symlink, `WRITE_OWNER` is explicitly denied, or the ACL write was refused. Fix the folder's permissions, or open a workspace you own. This is not a DSH authorization denial.
 
 - The root DACL is written through its own handle, without Windows' inheritance walk, so the cost no longer grows with the number of files (measured: 18.7 s → 4.3 s for 50,000 files; about 3.9 s for 10 files, mostly PowerShell startup). Earlier versions walked the whole tree and hit a 10 s limit on large workspaces, with nothing after the colon. (#43)
 - `the preparation executor timed out after 120000 ms …`: a 120 s safety net was hit. The ACL state is unknown, so compare the root DACL with the newest receipt in `acl-backups` before retrying. `the preparation executor could not start …` means `powershell.exe` itself could not be launched.
@@ -180,15 +311,25 @@ Legacy explicitly provisioned `<DSH_HOME>/dsh-ops/` files must be cleaned separa
 
 No. It is FastCtx's reusable shared process, started by earlier versions with the background component; this version starts none. With no clients and about ten minutes of inactivity, it exits normally. Do not kill it by process-name sweeps. This release does not automatically sweep processes left by older versions.
 
-## macOS arm64
+## macOS (arm64 and Intel)
 
 ### There is no bundled bash or PowerShell payload
 
-macOS ships no `@dsh-ops/bash-darwin-arm64` or `@dsh-ops/pwsh-darwin-arm64`
+macOS ships no `@dsh-ops/bash-darwin-*` or `@dsh-ops/pwsh-darwin-*`
 package, and no portable upstream bash exists for macOS. Select the shell the
-plugin should use with `bashPath` (for example `/opt/homebrew/bin/bash`) on the
-`dsh-ops/shell` row. PowerShell 7 can be provisioned, but the host disables its `pwsh-sandbox` and
+plugin should use with `bashPath` (for example `/opt/homebrew/bin/bash` on Apple
+Silicon, `/usr/local/bin/bash` on Intel, or `/bin/bash`) on a mode
+row. PowerShell 7 can be provisioned, but the host disables its `pwsh-sandbox` and
 `tool-pwsh` rows outside Windows, so no pwsh tool appears on macOS.
+
+### macOS 12: replace or copy fails with `METADATA_UNSUPPORTED`
+
+Overwriting an existing file, `replace` and `copy` use `fclonefileat(..., CLONE_ACL)`
+to preserve APFS ACLs. macOS 12's kernel does not implement that flag and returns
+`EINVAL`; the worker fails closed with `METADATA_UNSUPPORTED` and publishes
+nothing. This is an OS-version limit, not an Intel-specific defect. Use macOS 13+
+for the write path, or keep to read-only tools; a macOS 12 fallback is tracked as
+a separate follow-up. See [macOS](macos.md) for the full matrix.
 
 ### The file tools reject a path under `/tmp`
 
@@ -209,6 +350,37 @@ effect without a restart.
 
 ## See also
 
+- [Upgrade and uninstall safely](upgrading.md) — Windows file locks, registry policy checks and 0.3.x migration
 - [Usage](usage.md) — the complete install flow and CLI
 - [Configuration reference](configuration-reference.md) — keys and owning components
 - [Component reference](component-reference.md) — tools and permissions
+
+## Windows Bash integrity labels
+
+`dsh-ops ladder --json` now includes `shells.bash.integrity`, separate from
+`restricted.compatible`. It reads the resolved image, its physical path, the
+PortableGit `usr/bin/bash.exe` when present, and ancestor directories. A Low or
+lower image label produces a warning: full access does not remove that label,
+and a Low child cannot write existing Medium/unlabeled files. A Low ancestor is
+reported as an inheritance risk; it does not establish the current image's label
+or retroactively change old files.
+
+`entries` identify each path as `image` or `ancestor`. A successful label query
+with no label is `unlabeled` (Windows treats such objects as Medium); an unreadable
+path, unsupported descriptor or blocked query remains `unknown`, with report
+status `partial`. `complete` means the requested labels were read, not that Bash
+can start or write every target. Other platforms and unavailable Bash report
+`not-applicable`.
+
+The CLI runs one hidden PowerShell helper with a 10-second timeout. It requests
+only `LABEL_SECURITY_INFORMATION` through `GetNamedSecurityInfoW`, which requires
+`READ_CONTROL`, not the privilege needed to read audit SACLs. ConstrainedLanguage,
+policy refusal, missing PowerShell and timeout produce unknown results. It never
+enables privileges, changes execution policy or labels, starts the candidate
+Bash, or adds per-command/plugin-startup work. No automatic relocation or repair
+is performed. Keep host runtime diagnostics and the exact failed command when
+reporting a startup failure; compatible hashes and clean labels cannot prove
+runtime health.
+
+References: [Windows security information](https://learn.microsoft.com/en-us/windows/win32/secauthz/security-information)
+and [Mandatory Integrity Control](https://learn.microsoft.com/en-us/windows/win32/secauthz/mandatory-integrity-control).

@@ -1,15 +1,18 @@
 /**
  * The report layer: `bench/compare.mjs`, the slice that turns two archived runs into
- * the `report.md` a change review reads.
+ * the timestamped report a change review reads.
  *
  * The judgement itself is `compare-core.mjs` and is pinned by its own suite; what is
  * pinned here is the rendering and the wiring around it:
  *
- * 1. **Rendering is stable.** The same comparison and sources render byte-identical
- *    text twice — no clock, no random order — so a report is diffable.
- * 2. **The 结论条 has three wordings.** A delta beyond the A/A band reads a direction,
- *    a delta inside it reports the band only, and a comparison with no floor abstains
- *    (`noise-floor-unknown`) instead of reading noise as a result. The core's
+ * 1. **Rendering is stable, and the layout is fixed.** The same comparison and sources
+ *    render byte-identical text twice — no clock, no random order — so a report is
+ *    diffable; the title is a constant, the conclusion is the report's last section, and
+ *    every percent is painted by its sign (a drop or no change green, a rise red, in
+ *    `panel.html`'s palette).
+ * 2. **The closing conclusion has three wordings.** A delta beyond the A/A band reads a
+ *    direction, a delta inside it reports the band only, and a comparison with no floor
+ *    abstains (`noise-floor-unknown`) instead of reading noise as a result. The core's
  *    conclusion names travel verbatim into the text.
  * 3. **Excluded pairs are visible.** Pairs a failed side forced out of the cost
  *    statistics are counted, per task and in total.
@@ -30,7 +33,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { assert, report, test, withTempDir } from './lib/harness.mjs'
 
-import { EXIT, main, parseArgs, renderReport, resolveSide } from '../bench/compare.mjs'
+import { EXIT, main, parseArgs, renderReport, reportFileName, reportStamp, resolveSide } from '../bench/compare.mjs'
 import { COMPARE_FORMAT, compareSummaries } from '../bench/lib/compare-core.mjs'
 
 const LABEL = 'bench-compare'
@@ -52,9 +55,10 @@ function metrics(taskId, tokens, pass, extra = {}) {
     usage: { inputTokens: input, outputTokens: tokens - input, cacheReadTokens: 0, cacheWriteTokens: 0, grandTotal: tokens },
     usageReported: true,
     steps: extra.steps ?? 4,
-    toolCalls: 6,
-    toolErrors: 0,
-    toolCallsByName: { ops_read: 2, bash: 1 },
+    toolCalls: extra.toolCalls ?? 6,
+    toolErrors: extra.toolErrors ?? 0,
+    durationMs: extra.durationMs ?? 60_000,
+    toolCallsByName: extra.toolCallsByName ?? { ops_read: 2, bash: 1 },
     verify: { passed: pass, checks: [] },
     exitCode: 0,
     timedOut: false,
@@ -134,70 +138,155 @@ function writeRun(root, name, doc, fileName = 'run.json') {
 }
 
 /** A CLI invocation with the report and the diagnostics captured apart. */
-function invoke(argv) {
+function invoke(argv, extra = {}) {
   const out = []
   const err = []
   return {
-    run: () => main(argv, { out: (line) => out.push(line), err: (line) => err.push(line) }),
+    run: () => main(argv, { out: (line) => out.push(line), err: (line) => err.push(line), ...extra }),
     text: () => out.join('\n'),
     err: () => err.join('\n'),
   }
 }
 
-/** The two resolved sides a render needs, with stable paths. */
-const SOURCES = {
-  base: { file: '/runs/aa/base/run.json', spec: 'bench-base', kind: 'run' },
-  cand: { file: '/runs/aa/cand/run.json', spec: 'bench-ops', kind: 'run' },
+/** A literal path, escaped so it can be matched against a regex. */
+function literal(text) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
-await test('the same comparison renders byte-identical text twice, and the verdict bar words each noise outcome', () => {
+/** The two spans the report paints every percent with: green for a drop, red for a rise. */
+const green = (text) => `<span style="color:#3fb950">${text}</span>`
+const red = (text) => `<span style="color:#f85149">${text}</span>`
+
+/** The report is English-only: no CJK character may reach a generated artifact. */
+const assertEnglish = (text) => assert.doesNotMatch(text, /[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/, 'the report must not contain CJK characters')
+
+await test('the same comparison renders byte-identical text twice: tables first, Evidence last, no verdict prose', () => {
   const base = summary('bench-base', [metrics('csv-sum', 1000, true), metrics('csv-sum', 1000, true)])
-  const cheaper = summary('bench-ops', [metrics('csv-sum', 926, true), metrics('csv-sum', 926, true)])
+  const cheaper = summary('bench-ops', [metrics('csv-sum', 926, true, { durationMs: 55_000 }), metrics('csv-sum', 926, true, { durationMs: 55_000 })])
   const beyond = compareSummaries(base, cheaper, { noiseFloorPct: 3.1, failOn: 'both' })
-  const text = renderReport(beyond, SOURCES)
-  assert.equal(renderReport(beyond, SOURCES), text, 'rendering is a pure function of its inputs')
-  assert.match(text, /^# bench compare: bench-base → bench-ops$/m)
-  assert.match(text, /- 方向:Δ \u22127\.4%,超过噪声底 ±3\.1% ⇒ 可读方向:更省\(cheaper\)/)
-  assert.match(text, /🔬 噪声底\(A\/A\):±3\.1%\(provided\)/)
-  assert.match(text, /时间字段只作证据/)
+  const text = renderReport(beyond)
+  assert.equal(renderReport(beyond), text, 'rendering is a pure function of its inputs')
+  assertEnglish(text)
+  assert.match(text, /^# DSH-OPS Benchmark Report \(beta\)\n\nCondition: unknown\nCandidate switches: null \(null means unknown\)\n\nPlatform: base=unknown; cand=unknown\./, 'the header states condition, switches and environment evidence before the data')
+  assert.match(text, /^## Per-task pairs$/m)
+  assert.match(text, /^\| task \| base \| ops \(Δ%\) \| steps: base→ops \(Δ%\) \| tool calls: base→ops \(Δ%\) \| time: base→ops \(Δ%\) \| tool errors \| pass \|$/m, 'the first table carries cost, behaviour, wall-clock evidence and pass: no pairs, exclusion or direction column')
+  assert.ok(text.includes(`| csv-sum | 1,000 | 926 (${green('\u22127.4%')}) | 4 → 4 (${green('0.0%')}) | 6 → 6 (${green('0.0%')}) | 60.0s → 55.0s (${green('\u22128.3%')}) | 0 → 0 | 2/2→2/2 |`), 'each cell keeps its own Δ% in parentheses, painted like every other percent — time included')
+  assert.doesNotMatch(text, /geomean/, 'the table ends at TOTAL: the geomean row is gone')
+  assert.doesNotMatch(text, /## Excluded pairs|## A\/A noise band|## Token attribution/, 'the report keeps to cost, calls and the verdict: the three diagnostic sections are gone')
+  assert.doesNotMatch(text, /^## (Per-task pairs|Tool calls|Per-task bucket detail|Per-request overhead)\n\n(?!\|)/m, 'a table heading leads straight into its table: no explanatory line')
+  const headings = text.split('\n').filter((line) => line.startsWith('## '))
+  assert.equal(headings[headings.length - 1], '## Per-request overhead (what every request costs before any work)', 'the overhead table closes the report')
+  assert.doesNotMatch(text, /## Conclusion|## Warnings|## Evidence|## Usage split|## steps and tool calls|Direction:|noise floor \(A\/A\)|- gate:/, 'no verdict, warning or evidence prose: the verdict lives in the exit code and the comparison document')
+  assert.doesNotMatch(text, /Time is reported/, 'the report is tables and nothing else')
 
-  // Inside the band: the interval is reported, the direction is not.
-  const inside = compareSummaries(base, summary('bench-ops', [metrics('csv-sum', 975, true), metrics('csv-sum', 975, true)]), { noiseFloorPct: 3.1, failOn: 'both' })
-  const insideText = renderReport(inside, SOURCES)
-  assert.match(insideText, /- 方向:Δ \u22122\.5% 落在噪声带 ±3\.1% 内 ⇒ 只报区间,不读方向\(within-noise\)/)
-  assert.doesNotMatch(insideText, /可读方向/)
-  assert.match(insideText, /🚦 门禁通过/)
-
-  // No floor at all: the report says so and withholds every direction.
-  const unknown = compareSummaries(base, summary('bench-ops', [metrics('csv-sum', 1500, true), metrics('csv-sum', 1500, true)]), { failOn: 'both' })
-  const unknownText = renderReport(unknown, SOURCES)
-  assert.match(unknownText, /- 噪声底\(A\/A\):未知\(noise-floor-unknown\)/)
-  assert.match(unknownText, /- 方向:Δ \+50\.0%,但噪声底未知 ⇒ 弃权,不读方向\(noise-floor-unknown\)/)
-  assert.match(unknownText, /--noise-floor-pct N 或 --noise <base> <cand>/)
-  assert.doesNotMatch(unknownText, /可读方向/)
-  assert.match(unknownText, /🚦 门禁通过/, 'an abstaining gate is not a failed gate')
-
-  // A costlier delta beyond the band is the one case that names a regression.
+  // The gate still judges even though the report no longer prints a conclusion: a
+  // costlier delta fails the comparison document, and the CLI maps it to exit 1.
   const worse = compareSummaries(base, summary('bench-ops', [metrics('csv-sum', 1050, true), metrics('csv-sum', 1050, true)]), { noiseFloorPct: 3.1, failOn: 'both' })
-  const worseText = renderReport(worse, SOURCES)
-  assert.match(worseText, /- 方向:Δ \+5\.0%,超过噪声底 ±3\.1% ⇒ 可读方向:更贵\(costlier\)/)
-  assert.match(worseText, /🚦 门禁失败\(regression\)/)
-  assert.match(worseText, /\| csv-sum \| 1,000 \| 1,050 \| \+5\.0% \| 2\/2 \| 0 \| 2\/2→2\/2 \| ⚠ 回归 \|/)
+  const worseText = renderReport(worse)
+  assert.ok(worseText.includes(`| csv-sum | 1,000 | 1,050 (${red('+5.0%')}) | 4 → 4 (${green('0.0%')}) | 6 → 6 (${green('0.0%')}) | 60.0s → 60.0s (${green('0.0%')}) | 0 → 0 | 2/2→2/2 |`))
+  assert.equal(worse.gate.fail, true, 'the gate verdict stays in the comparison document')
+  assert.equal(worse.gate.primary, 'regression')
+  assertEnglish(worseText)
 })
 
-await test('excluded pairs are counted per task and in total, and their absence is said out loud', () => {
+await test('the first table reads the aggregate its flag names: medians, min, halved medians and raw error counts', () => {
+  const base = summary('bench-base', [metrics('csv-sum', 1000, true, { steps: 5 }), metrics('csv-sum', 1000, true, { steps: 3 })])
+  const cand = summary('bench-ops', [metrics('csv-sum', 900, true, { steps: 3 }), metrics('csv-sum', 900, true, { steps: 3 })])
+  const text = renderReport(compareSummaries(base, cand, { noiseFloorPct: 3.1, failOn: 'both' }))
+  assertEnglish(text)
+  assert.ok(text.includes(`| csv-sum | 1,000 | 900 (${green('\u221210.0%')}) | 4 → 3 (${green('\u221225.0%')}) | 6 → 6 (${green('0.0%')}) | 60.0s → 60.0s (${green('0.0%')}) | 0 → 0 | 2/2→2/2 |`), 'the steps and tool-call cells carry the medians with their Δ%')
+
+  const minText = renderReport(compareSummaries(base, cand, { noiseFloorPct: 3.1, failOn: 'both', aggregate: 'min' }))
+  assert.ok(minText.includes(`| 3 → 3 (${green('0.0%')}) | 6 → 6 (${green('0.0%')}) |`), '`min` moves the cells, not only the title')
+
+  // An even repeat count halves the median: the cell has to show 12.5, not round it
+  // into "13 → 13 (+4.0%)", which contradicts its own Δ%.
+  const halfBase = summary('bench-base', [metrics('csv-sum', 1000, true, { toolCalls: 13 }), metrics('csv-sum', 1000, true, { toolCalls: 12 })])
+  const halfCand = summary('bench-ops', [metrics('csv-sum', 900, true, { toolCalls: 13 }), metrics('csv-sum', 900, true, { toolCalls: 13 })])
+  const halfText = renderReport(compareSummaries(halfBase, halfCand, { noiseFloorPct: 3.1, failOn: 'both' }))
+  assert.ok(halfText.includes(`| 12.5 → 13 (${red('+4.0%')}) |`), 'a halved median shows 12.5, not a rounded 13')
+
+  // Tool errors are raw counts in the first table, not a median ratio: 2 → 0.
+  const errBase = summary('bench-base', [metrics('csv-sum', 1000, true, { toolErrors: 2 })])
+  const errCand = summary('bench-ops', [metrics('csv-sum', 900, true, { toolErrors: 0 })])
+  const errText = renderReport(compareSummaries(errBase, errCand, { noiseFloorPct: 3.1, failOn: 'both' }))
+  assert.ok(errText.includes(`| 60.0s → 60.0s (${green('0.0%')}) | 2 → 0 | 1/1→1/1 |`), 'tool errors are counted, not percentaged')
+})
+
+await test('the per-request overhead table prices the first request and degrades without prompt data', () => {
+  const base = summary('bench-base', [
+    metrics('csv-sum', 1000, true, { steps: 6, firstStep: 6249, total: 15186 }),
+    metrics('csv-sum', 1000, true, { steps: 6, firstStep: 6249, total: 15186 }),
+  ])
+  const cand = summary('bench-ops', [
+    metrics('csv-sum', 1000, true, { steps: 6, firstStep: 8032, total: 23628 }),
+    metrics('csv-sum', 1000, true, { steps: 6, firstStep: 8032, total: 23628 }),
+  ])
+  const text = renderReport(compareSummaries(base, cand, { noiseFloorPct: 3.1, failOn: 'both' }))
+  assertEnglish(text)
+  assert.match(text, /^## Per-request overhead \(what every request costs before any work\)$/m)
+  assert.ok(text.includes(`| csv-sum | 6,249 → 8,032 (+1,783, ${red('+28.5%')}) |`), 'the row carries only the first-request delta, abs and painted pct')
+  assert.doesNotMatch(text, /prompt \/ step|Fixed per-request cost|The first request of a run carries no history/)
+
+  const noPrompt = renderReport(compareSummaries(
+    summary('bench-base', [metrics('csv-sum', 1000, true, { prompt: false })]),
+    summary('bench-ops', [metrics('csv-sum', 1000, true, { prompt: false })]),
+  ))
+  assert.match(noPrompt, /Skipped: neither side recorded `metrics\.prompt`/, 'no prompt data ⇒ the section says so instead of inventing numbers')
+  assert.doesNotMatch(noPrompt, /first request: base→ops/)
+})
+
+await test('the tool table keeps the per-side totals, splits them by task, and colours adoption', () => {
+  const base = summary('bench-base', [metrics('csv-sum', 1000, true, { toolCallsByName: { ops_read: 2, bash: 1, write: 4 } })])
+  const cand = summary('bench-ops', [metrics('csv-sum', 900, true, { toolCallsByName: { ops_read: 3, bash: 2, write: 4 } })])
+  const text = renderReport(compareSummaries(base, cand, { noiseFloorPct: 3.1, failOn: 'both' }))
+  assert.match(text, /^## Tool calls$/m)
+  const headings = text.split('\n').filter((line) => line.startsWith('## '))
+  assert.equal(headings[1], '## Tool calls', 'the tool table sits directly under the per-task pair table: it is the first explanation of where the token Δ went')
+  assert.match(text, /^\| tool \| base \| ops \| csv-sum \|$/m, 'the base/ops totals stay, and each task adds a column')
+  assert.ok(text.includes(`| ops_read | 2 | ${green('3')} | 2 → ${green('3')} |`), 'an ops tool rising is green: the plugin replaced a built-in')
+  assert.ok(text.includes(`| bash | 1 | ${red('2')} | 1 → ${red('2')} |`), 'a built-in rising is red: the candidate reached past the plugin')
+  assert.ok(text.includes('| write | 4 | 4 | 4 → 4 |'), 'equal counts are not painted')
+
+  // Falling is green for a built-in and red for an ops tool: adoption, not the sign.
+  const closed = summary('bench-ops', [metrics('csv-sum', 900, true, { toolCallsByName: { ops_read: 3 } })])
+  const closedText = renderReport(compareSummaries(base, closed, { noiseFloorPct: 3.1, failOn: 'both' }))
+  assert.ok(closedText.includes(`| bash | 1 | ${green('0')} | 1 → ${green('0')} |`), 'a built-in the candidate stopped calling is green')
+  assert.ok(closedText.includes(`| write | 4 | ${green('0')} | 4 → ${green('0')} |`))
+
+  const declined = compareSummaries(
+    summary('bench-base', [metrics('csv-sum', 1000, true, { toolCallsByName: { ops_read: 5 } })]),
+    summary('bench-ops', [metrics('csv-sum', 900, true, { toolCallsByName: { ops_read: 2 } })]),
+    { noiseFloorPct: 3.1, failOn: 'both' },
+  )
+  assert.ok(renderReport(declined).includes(`| ops_read | 5 | ${red('2')} | 5 → ${red('2')} |`), 'an ops tool falling is red: adoption moved backwards')
+
+  // Each task keeps its own column; a tool nobody used in a task reads as a dash.
+  const twoTasks = compareSummaries(
+    summary('bench-base', [metrics('csv-sum', 1000, true, { toolCallsByName: { ops_read: 1 } }), metrics('api-rename', 1000, true, { toolCallsByName: { ops_read: 2 } })]),
+    summary('bench-ops', [metrics('csv-sum', 900, true, { toolCallsByName: { ops_read: 3 } }), metrics('api-rename', 900, true, { toolCallsByName: { ops_read: 4 } })]),
+    { noiseFloorPct: 3.1, failOn: 'both' },
+  )
+  const twoText = renderReport(twoTasks)
+  assert.match(twoText, /^\| tool \| base \| ops \| csv-sum \| api-rename \|$/m)
+  assert.ok(twoText.includes(`| ops_read | 3 | ${green('7')} | 1 → ${green('3')} | 2 → ${green('4')} |`), 'the count belongs to the task that made the call')
+})
+
+await test('excluded pairs leave the report body but stay in the warnings, and the pair table prices only usable pairs', () => {
   const base = summary('bench-base', [metrics('csv-sum', 1000, true), metrics('csv-sum', 1000, true), metrics('csv-sum', 1000, true)])
   const cand = summary('bench-ops', [metrics('csv-sum', 500, true), metrics('csv-sum', 100, false), metrics('csv-sum', 200, false)])
   const comparison = compareSummaries(base, cand, { noiseFloorPct: 3.1, failOn: 'pass-drop' })
-  const text = renderReport(comparison, SOURCES)
-  assert.match(text, /## 被排除的配对\(成本不统计\)/)
-  assert.match(text, /共 2 对因至少一侧未通过被排除:base 失败 0 · cand 失败 2 · 两侧都失败 0。/)
-  assert.match(text, /\| csv-sum \| 2 \| 0 \| 2 \| 0 \|/)
-  assert.match(text, /1\/3 \| 2 \| 3\/3→1\/3 \|/, 'the pair table shows the usable/considered split next to the exclusion count')
-  assert.match(text, /- cost-pairs-excluded: 2 \(base 0, cand 2, both 0\)/)
+  const text = renderReport(comparison)
+  assertEnglish(text)
+  assert.doesNotMatch(text, /## Excluded pairs/, 'the section is gone; the counts must not vanish with it')
+  assert.ok(text.includes(`| csv-sum | 1,000 | 500 (${green('\u221250.0%')}) |`), 'the pair table still prices the one usable pair')
+  assert.ok(text.includes('| 3/3→1/3 |'), 'the pass column counts every repeat, not only the usable pairs')
+  assert.doesNotMatch(text, /pairs usable\/counted/, 'the usable/considered split no longer has a column')
+  assert.ok(comparison.warnings.includes('cost-pairs-excluded: 2 (base 0, cand 2, both 0)'), 'the comparison document still carries how many pairs the cost statistics lost')
 
   const clean = compareSummaries(base, summary('bench-ops', base.results.map((entry) => ({ ...entry, usage: { ...entry.usage } }))), { noiseFloorPct: 3.1, failOn: 'none' })
-  assert.match(renderReport(clean, SOURCES), /没有被排除的配对:两侧都通过的配对全部参与了成本统计。/)
+  assert.deepEqual(clean.warnings, [], 'nothing excluded means nothing to warn about')
+  assertEnglish(text)
 })
 
 await test('--fail-on gates individually, and a gate that cannot run abstains at exit 0', async () => {
@@ -224,8 +313,8 @@ await test('--fail-on gates individually, and a gate that cannot run abstains at
     // No noise floor: the same +10% is measured but not judged — abstain, exit 0.
     const abstain = invoke([baseline, costlier, '--out', '-', '--fail-on', 'both'])
     assert.equal(await abstain.run(), EXIT.ok)
-    assert.match(abstain.err(), /噪声底未知 ⇒ 成本方向弃权/)
-    assert.match(abstain.text(), /noise-floor-unknown/)
+    assert.match(abstain.err(), /noise floor unknown ⇒ cost direction withheld/)
+    assert.match(abstain.err(), /noise-floor-unknown/, 'the abstaining gate says so on stderr — the report prints no verdict prose')
   })
 })
 
@@ -248,7 +337,7 @@ await test('--json prints the compare-core document itself, not a re-derived sha
       { noiseFloorPct: 3.1 },
     )
     assert.deepEqual(doc, JSON.parse(JSON.stringify(expected)), 'the JSON is the core document verbatim')
-    assert.equal(fs.existsSync(path.join(candDir, 'report.md')), false, 'JSON mode writes no markdown unless --out names a file')
+    assert.equal(fs.readdirSync(candDir).sort().join(), 'run.json', 'JSON mode writes no markdown unless --out names a file')
 
     // …and --out writes the JSON where asked.
     const target = path.join(root, 'out', 'comparison.json')
@@ -258,25 +347,47 @@ await test('--json prints the compare-core document itself, not a re-derived sha
   })
 })
 
-await test('the default artifact is <cand>/report.md, and --out - writes nothing', async () => {
+await test('the default artifact lands in the sweep folder, named by the write instant', async () => {
+  assert.equal(reportStamp(new Date('2026-10-20T12:36:38.123Z')), '2026-10-20T12-36-38Z', 'the name carries a filesystem-safe UTC stamp')
+  assert.equal(reportFileName(new Date('2026-10-20T12:36:38.123Z')), 'DSH-OPS Benchmark Report 2026-10-20T12-36-38Z.md')
   await withTempDir('bench-compare-out', async (root) => {
-    const baseDir = writeRun(root, 'base', sealedRun('bench-base', [row('csv-sum', 1, 700, true)]))
-    const candDir = writeRun(root, 'cand', sealedRun('bench-ops', [row('csv-sum', 1, 500, true)]))
-    const cli = invoke([baseDir, candDir, '--noise-floor-pct', '3.1'])
+    const runs = path.join(root, 'runs')
+    const group = path.join(runs, 'benchmark-test-07')
+    const baseDir = writeRun(group, '2026-10-18T00-00-00Z-bench-base', sealedRun('bench-base', [row('csv-sum', 1, 700, true)]))
+    const candDir = writeRun(group, '2026-10-18T00-00-01Z-bench-ops', sealedRun('bench-ops', [row('csv-sum', 1, 500, true)]))
+    const instant = Date.parse('2026-10-20T12:36:38.123Z')
+    const sides = ['bench-base', 'bench-ops', '--runs', runs, '--folder', 'benchmark-test-07', '--noise-floor-pct', '3.1']
+    const cli = invoke(sides, { now: () => instant })
     assert.equal(await cli.run(), EXIT.ok)
-    const reportFile = path.join(candDir, 'report.md')
-    assert.ok(fs.existsSync(reportFile), 'the report lands beside the candidate run.json')
+    const reportFile = path.join(group, 'DSH-OPS Benchmark Report 2026-10-20T12-36-38Z.md')
+    assert.ok(fs.existsSync(reportFile), 'the report lands in the sweep folder, not inside the arm that measured half of it')
+    assert.equal(fs.readdirSync(candDir).sort().join(), 'run.json', 'the arm directory keeps its own evidence only')
     assert.equal(fs.readFileSync(reportFile, 'utf8'), cli.text())
-    assert.match(cli.err(), new RegExp(`compare: wrote ${reportFile.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`))
+    assert.match(cli.err(), new RegExp(`compare: wrote ${literal(reportFile)}`))
 
-    const stdoutOnly = invoke([baseDir, candDir, '--noise-floor-pct', '3.1', '--out', '-'])
+    // A second comparison is a second artifact: the instant in the name stops one sweep
+    // from overwriting the report of another that ran a second earlier.
+    const later = invoke(sides, { now: () => instant + 1000 })
+    assert.equal(await later.run(), EXIT.ok)
+    assert.ok(fs.existsSync(reportFile) && fs.existsSync(path.join(group, 'DSH-OPS Benchmark Report 2026-10-20T12-36-39Z.md')))
+
+    // The same placement holds when the sides are given as directories rather than labels.
+    const byDir = invoke([baseDir, candDir, '--runs', runs, '--noise-floor-pct', '3.1'], { now: () => instant + 2000 })
+    assert.equal(await byDir.run(), EXIT.ok)
+    assert.ok(fs.existsSync(path.join(group, 'DSH-OPS Benchmark Report 2026-10-20T12-36-40Z.md')), 'a run directory inside a sweep folder is promoted too')
+
+    // A run directory directly under the runs root has no sweep folder to promote to.
+    const flatDir = writeRun(runs, '2026-10-18T00-00-02Z-bench-ops', sealedRun('bench-ops', [row('csv-sum', 1, 500, true)]))
+    assert.equal(await invoke([baseDir, flatDir, '--runs', runs, '--noise-floor-pct', '3.1'], { now: () => instant }).run(), EXIT.ok)
+    assert.ok(fs.existsSync(path.join(flatDir, 'DSH-OPS Benchmark Report 2026-10-20T12-36-38Z.md')), 'no group folder ⇒ the report stays beside run.json')
+
+    const stdoutOnly = invoke([baseDir, candDir, '--noise-floor-pct', '3.1', '--out', '-'], { now: () => instant })
     assert.equal(await stdoutOnly.run(), EXIT.ok)
-    assert.equal(fs.existsSync(path.join(root, 'report.md')), false)
-    assert.equal(fs.readFileSync(reportFile, 'utf8'), stdoutOnly.text(), '--out - renders the same text without touching disk')
+    assert.equal(fs.readdirSync(candDir).sort().join(), 'run.json', '--out - writes nothing')
 
     const explicit = path.join(root, 'elsewhere', 'r.md')
-    assert.equal(await invoke([baseDir, candDir, '--noise-floor-pct', '3.1', '--out', explicit]).run(), EXIT.ok)
-    assert.equal(fs.readFileSync(explicit, 'utf8'), cli.text())
+    assert.equal(await invoke([baseDir, candDir, '--noise-floor-pct', '3.1', '--out', explicit], { now: () => instant }).run(), EXIT.ok)
+    assert.equal(fs.readFileSync(explicit, 'utf8'), stdoutOnly.text())
   })
 })
 
@@ -291,14 +402,11 @@ await test('label, directory and file forms resolve to the same comparison', asy
     const byDir = invoke([baseDir, candDir, ...common])
     const byFile = invoke([path.join(baseDir, 'run.json'), path.join(candDir, 'run.json'), ...common])
     for (const cli of [byLabel, byDir, byFile]) assert.equal(await cli.run(), EXIT.ok)
-    // The comparison renders identically; the evidence section is the one place
-    // that echoes how each side was named (`spec`), which the caller chose.
-    const body = (text) => text.split('\n').filter((line) => !/^- (base|cand):/.test(line)).join('\n')
-    assert.equal(body(byLabel.text()), body(byDir.text()))
-    assert.equal(body(byFile.text()), body(byDir.text()), 'all three forms reach the same comparison')
-    assert.match(byLabel.text(), /- base:.*run\.json\(spec `bench-base`,run\)/)
-    assert.match(byDir.text(), /- base:.*run\.json\(spec `.*bench-base`,run\)/)
-    assert.match(byDir.text(), /api-rename \| 500 \| 620 \| \+24\.0% \| 1\/1 \| 0 \| 1\/1→1\/1 \| ⚠ 回归 \|/)
+    // The report carries no side paths, so the three resolution forms render
+    // byte-identically: nothing anywhere echoes how each side was named.
+    assert.equal(byLabel.text(), byDir.text())
+    assert.equal(byFile.text(), byDir.text(), 'all three forms reach the same comparison')
+    assert.ok(byDir.text().includes(`api-rename | 500 | 620 (${red('+24.0%')}) | 2 → 2 (${green('0.0%')}) | 1 → 1 (${green('0.0%')}) | 0.0s → 0.0s (${green('0.0%')}) | 0 → 0 | 1/1→1/1 |`))
 
     // A group is searched with --folder; the flat root is searched without it.
     assert.equal((await invoke(['bench-base', 'bench-ops', '--runs', runs, ...common]).run()), EXIT.ok)
@@ -366,14 +474,14 @@ await test('--noise measures the floor in the call, and a missing prompt degrade
     assert.equal(doc.noiseFloor.method, 'aa-max-abs-task-pct')
     assert.equal(doc.noiseFloor.pct, 4, '+50% clears the measured 4% floor')
     assert.equal(doc.gate.regressionFailed, true)
-    assert.match(renderReport(doc, SOURCES), /方法 `aa-max-abs-task-pct`/)
 
-    // A row with no duration/prompt capture cannot support attribution, and the
-    // report says "Skipped" rather than presenting a guess.
-    const bare = summary('bench-base', [{ ...metrics('csv-sum', 1000, true, { prompt: false }) }])
-    const text = renderReport(compareSummaries(bare, summary('bench-ops', [metrics('csv-sum', 900, true, { prompt: false })]), { noiseFloorPct: 3.1 }), SOURCES)
-    assert.match(text, /Skipped:至少一侧没有 prompt 采集/)
-    assert.doesNotMatch(text, /每请求固定开销 \|/)
+    // A row with no prompt capture cannot support attribution: the core records that,
+    // and the report has no attribution section left to hedge in.
+    const bare = compareSummaries(summary('bench-base', [metrics('csv-sum', 1000, true, { prompt: false })]), summary('bench-ops', [metrics('csv-sum', 900, true, { prompt: false })]), { noiseFloorPct: 3.1 })
+    assert.equal(bare.overhead.comparable, false, 'the core marks the split incomparable')
+    const text = renderReport(bare)
+    assert.doesNotMatch(text, /Token attribution|fixed overhead per request/)
+    assertEnglish(text)
   })
 })
 

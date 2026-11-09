@@ -10,7 +10,8 @@
  * prompt section the manifest advertises actually being registered by name, and
  * the display metadata the Plugin Manager reads without activating the plugin
  * (icon and locale documents) being real, package-relative, and published by the
- * `files` whitelist.
+ * `files` whitelist, and no `prepare`/`postinstall` lifecycle hook shipping a
+ * channel this package cannot satisfy.
  *
  * @module dsh-ops/validate-manifest
  */
@@ -18,22 +19,27 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { componentChecks, defaultChecks } from './lib/catalogue-checks.mjs'
 import { parse as parseYaml } from 'yaml'
 import {
   IN_PROCESS_TOOLS,
+  MODE_SECTION_ORDERS,
   TOOLING_SECTION,
   TOOL_PREFIX,
   publicToolName,
   renderToolingPolicy,
 } from '../lib/policy.js'
-import { NATIVE_FILE_TOOLS } from '../lib/capabilities/registry.js'
+import { CAPABILITIES, NATIVE_FILE_TOOLS } from '../lib/capabilities/registry.js'
 import { resolvePtcConfig } from '../lib/ptc/index.js'
 import { resolveTuiConfig } from '../lib/components/tui/index.js'
 import { resolvePanelConfig } from '../lib/components/panel/index.js'
 import { PTC_API_TOOLS, definition } from '../lib/ptc/contract.js'
 import { resolveConfig, resolveDiscoveryConfig } from '../lib/config.js'
+import { resolveMergedConfig } from '../lib/settings/merged.js'
 import { COMPONENTS, componentEntry, componentEnabled } from '../lib/components/defaults.js'
 import { resolveHidingConfig } from '../lib/official-tool-hiding.js'
+import { evaluatePluginCompatibility } from '@deepseek-ai/dsh-app-boot'
+import { composeBundle } from './lib/compose-bundle.mjs'
 
 /** The repository root (`scripts/`'s parent). */
 const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -224,24 +230,27 @@ if (typeof patch === 'string' && fs.existsSync(path.join(PACKAGE_ROOT, patch))) 
 
   if (document !== undefined) {
     check(Array.isArray(document), 'the bundle patch is a list of loader patch entries')
+    try {
+      const composed = composeBundle([document])
+      check(composed.length === 1, 'the host composes the single dsh-ops row')
+    } catch (error) { check(false, 'the host composes the single dsh-ops row', String(error?.message ?? error)) }
     const rows = Array.isArray(document)
       ? document.flatMap((entry) => (Array.isArray(entry?.insert) ? entry.insert : []))
       : []
-    check(rows.length === 7, 'the bundle declares exactly seven components')
-    check(!rows.some(candidate => candidate?.name === `${pkg.name}/background`), 'the bundle no longer inserts the removed background component')
-    for (const component of COMPONENTS) {
-      const row = rows.find(candidate => candidate?.name === componentEntry(component))
-      check(row?.id === `${pkg.name}-${component}`, `the ${component} component has a stable row id`)
-      if (!row) continue
-      check((row.disabled === true) === !componentEnabled(component, process.platform), `${component} has its documented enablement default`)
-      const resolve = component === 'discovery' ? resolveDiscoveryConfig : component === 'tui' ? resolveTuiConfig
-        : component === 'ptc' ? resolvePtcConfig
-          : component === 'hide-official' ? resolveHidingConfig
-            : component === 'panel' ? resolvePanelConfig
-              : resolveConfig
-      try { resolve(row.config); check(true, `${component} config is valid`) }
-      catch (error) { check(false, `${component} config is valid`, String(error?.message ?? error)) }
-    }
+    check(rows.length === 1, 'the bundle declares exactly one row')
+    const row = rows[0]
+    check(row?.id === pkg.name && row?.name === pkg.name, 'the row id and specifier are the package name')
+    check(row?.disabled !== true, 'the row ships enabled')
+    try {
+      const resolved = resolveMergedConfig(row?.config)
+      check(true, 'the row config is valid')
+      const defaults = resolveMergedConfig({})
+      const same = (a, b) => JSON.stringify(a) === JSON.stringify(b)
+      check(same(resolved.global, defaults.global), 'the bundle switches written in the patch match their code defaults')
+      for (const section of ['minimal', 'standard', 'ptc', 'cordis', 'discovery', 'panel', 'tui']) {
+        check(resolved[section].enabled === defaults[section].enabled, `${section} enabled matches its code default`)
+      }
+    } catch (error) { check(false, 'the row config is valid', String(error?.message ?? error)) }
   }
 }
 
@@ -287,9 +296,8 @@ const equippedPolicy = renderToolingPolicy({
   levels: { files: true, bash: true, pwsh: true },
 })
 
-// Every namespace after the first describes tools this plugin registers itself,
-// so those names are checked against `IN_PROCESS_TOOLS` and against the policy
-// text that has to name them. Written against whatever the manifest declares.
+// Shell routing names the owned shell surface. PTC/discovery controls have their
+// own scoped guidance; the static inventory must not make them resident.
 check(
   IN_PROCESS_TOOLS.every((toolName) => equippedPolicy.includes(publicToolName(toolName))),
   'the tools this plugin registers itself are named by the tooling policy',
@@ -298,21 +306,29 @@ check(
 for (const [index, entry] of namespaces.slice(1).entries()) {
   const declared = Array.isArray(entry?.tools) ? entry.tools : []
   const identified = declared.filter((toolName) => typeof toolName === 'string'
-    && IN_PROCESS_TOOLS.includes(toolName)
-    && equippedPolicy.includes(publicToolName(toolName)))
+    && CAPABILITIES.some(capability => capability.rawName === toolName))
   check(
-    declared.length > 0 && identified.length === declared.length,
+    declared.length > 0 && identified.length === declared.length
+      && entry.serverName === 'dsh-ops' && entry.transport === 'in-process' && entry.publicPrefix === TOOL_PREFIX,
     `every tool of the namespace at index ${index + 1} is published under ${TOOL_PREFIX} by this plugin itself`,
-    `declared ${JSON.stringify(entry?.tools)} vs in-process ${IN_PROCESS_TOOLS.map(publicToolName).join(', ') || '(none)'}`,
+    `declared ${JSON.stringify(entry?.tools)} vs catalogue ${CAPABILITIES.map(entry => entry.rawName).join(', ')}`,
   )
 }
+const namespaceTools = namespaces.flatMap(entry => Array.isArray(entry?.tools) ? entry.tools : []).sort()
+const catalogueTools = CAPABILITIES.map(entry => entry.rawName).sort()
+check(
+  JSON.stringify(namespaceTools) === JSON.stringify(catalogueTools),
+  'the namespace inventory covers every owned capability exactly once',
+  `manifest ${namespaceTools.join(',')} vs catalogue ${catalogueTools.join(',')}`,
+)
 
 const sections = manifestRaw.contributes?.['x-prompt-sections'] ?? []
 const sectionNames = sections.map((section) => section.name)
+const expectedSections = Object.keys(MODE_SECTION_ORDERS).map(suffix => `${TOOLING_SECTION}:${suffix}`)
 check(
-  sectionNames.length === 3 && ['file', 'shell', 'ptc'].every(component => sectionNames.includes(`${TOOLING_SECTION}:${component}`)),
+  sectionNames.length === expectedSections.length && expectedSections.every(name => sectionNames.includes(name)),
   'the declared prompt sections match lib/policy.js',
-  `declared ${sectionNames.join(', ')} vs policy ${TOOLING_SECTION}`,
+  `declared ${sectionNames.join(', ')} vs policy ${expectedSections.join(', ')}`,
 )
 check(
   sections.every((section) => typeof section.order === 'number' && Number.isFinite(section.order)),
@@ -484,24 +500,24 @@ if (display !== undefined) {
 }
 
 /** Payload the published package must carry, as `files` entries or paths they cover. */
-const ptc = manifestRaw.contributes?.['x-components']?.find(c => c.id === 'dsh-ops-ptc')
-check(ptc?.entry === 'dsh-ops/ptc' && ptc?.defaultEnabled === true, 'native PTC enhancement is enabled by default; presentation stays scoped')
-check(JSON.stringify(ptc?.tools) === JSON.stringify([...PTC_API_TOOLS, 'load_sdk'].map(publicToolName)), 'PTC declaration matches the generated tool contract')
+const components = manifestRaw.contributes?.['x-components'] ?? []
+const single = components[0]
+for (const fact of componentChecks(components)) check(...fact)
+check(single?.entry === 'dsh-ops' && single?.defaultEnabled === true, 'the single row is enabled by default and keeps its presentation')
+check([...PTC_API_TOOLS, 'load_sdk'].map(publicToolName).every(tool => (single?.tools ?? []).includes(tool)),
+  'the declaration covers the generated PTC tool contract')
 check(PTC_API_TOOLS.every(t => definition(t, () => {}).parameters.type === 'object'), 'PTC schemas remain structured')
 check(JSON.stringify(pkg.os) === '["win32","linux","darwin"]' && JSON.stringify(pkg.cpu) === '["x64","arm64"]' &&
-  JSON.stringify(ptc?.platforms) === '["win32","linux","darwin"]' && JSON.stringify(ptc?.architectures) === '["x64","arm64"]' &&
-  JSON.stringify(ptc?.targets) === '["win32-x64","linux-x64","linux-arm64","darwin-arm64"]',
-  'Supported exact targets are Windows x64, Linux x64, Linux arm64 and macOS Apple Silicon; Intel Mac is unsupported')
-/** Every component states the platforms it really serves, so a Linux claim cannot ride along. */
-const platformClaims = id => manifestRaw.contributes?.['x-components']?.find(c => c.id === id)?.platforms
-check(JSON.stringify(platformClaims('dsh-ops-shell')) === '["win32","linux","darwin"]',
-  'the shell component supports the declared targets using host bash on POSIX')
-check(JSON.stringify(platformClaims('dsh-ops-file')) === '["win32","linux","darwin"]',
-  'the file component supports the exact worker target matrix')
-check(platformClaims('dsh-ops-background') === undefined,
+  JSON.stringify(single?.platforms) === '["win32","linux","darwin"]' &&
+  JSON.stringify(single?.targets) === '["win32-x64","linux-x64","darwin-arm64","darwin-x64"]',
+  'Supported exact targets are Windows x64, Linux x64 and macOS arm64/x64; Intel Mac is supported')
+/** One declaration states every platform the package serves; the row carries no per-feature claims. */
+const claims = JSON.stringify(single?.platforms)
+check(claims === '["win32","linux","darwin"]', 'the row serves the declared platform matrix')
+check(!components.some(component => component.id === 'dsh-ops-background'),
   'the removed background component is no longer declared')
-check(JSON.stringify(platformClaims('dsh-ops-panel')) === '["win32","linux","darwin"]',
-  'the panel capture component supports the declared targets (static files, no platform payload)')
+check(claims === '["win32","linux","darwin"]' && fs.existsSync(path.join(PACKAGE_ROOT, 'lib/panel/panel.html')),
+  'the single row carries panel capture on the declared targets (static files, no platform payload)')
 /** The viewer is runtime output, so the template itself has to be in the package. */
 const panelTemplate = 'lib/panel/panel.html'
 check(
@@ -544,10 +560,42 @@ check(
   `got: ${unpublishable.join(', ')}`,
 )
 
+// The `git+https` channel is not a supported install channel, and no install-time
+// lifecycle hook may pretend otherwise (#524). `prepare` runs for a git-hosted
+// dependency after pnpm unpacks it, so adding one would "fix" the missing `lib/` —
+// but the native worker is staged by `npm run build:ptc`, which needs cargo, and
+// `prepack` never stages it. A git install would still resolve no worker and
+// silently publish no file tools, while every install would take on a full
+// TypeScript build. The other `*install` hooks are refused for the reason
+// `bin/check-release.mjs` refuses `postinstall`: the payload arrives as a declared
+// optional dependency, never from a download or build hook.
+// The rule matches the whole install-time family — `install`, `preinstall`,
+// `postinstall`, `prepare`, `preprepare`, `postprepare` — including hooks that
+// have nothing to do with building this package. Intent is not something a gate can
+// read, and an unrelated `preinstall` still runs code on every consumer's machine.
+const LIFECYCLE_HOOKS = /^(?:pre|post)?(?:prepare|install)$/u
+const lifecycleHooks = Object.keys(pkg.scripts ?? {}).filter((name) => LIFECYCLE_HOOKS.test(name))
 check(
-  typeof pkg.peerDependencies?.['@deepseek-ai/dsh'] === 'string',
-  'the plugin declares a DSH peer range for the host compatibility gate',
+  lifecycleHooks.length === 0,
+  'package.json declares no install-time lifecycle hook: the git channel cannot be fixed with one',
+  `found ${lifecycleHooks.join(', ')}; docs/upgrading.md explains why no install-time hook can fix the git channel and which channel is supported`,
 )
+
+check(
+  typeof pkg.engines?.dsh === 'string' && pkg.engines.dsh === pkg.peerDependencies?.['@deepseek-ai/dsh'],
+  'engines.dsh and the legacy DSH peer declare the same compatibility range',
+)
+for (const version of ['0.2.2-rc.1', '0.2.2-rc.2', '0.2.2']) {
+  check(evaluatePluginCompatibility(pkg, {}, version) === undefined, `the declared range accepts DSH ${version}`)
+}
+for (const version of ['0.2.0-rc.2', '0.2.1-rc.5', '0.2.1', '0.2.2-alpha.2', '0.2.2-rc.0', '0.2.3-0', '0.3.0']) {
+  check(evaluatePluginCompatibility(pkg, {}, version) !== undefined, `the declared range rejects DSH ${version}`)
+}
+for (const component of [...COMPONENTS, 'background']) {
+  const resource = pkg.exports?.[`./${component}/icon`]
+  check(typeof resource === 'string' && fs.existsSync(path.join(PACKAGE_ROOT, resource)),
+    `the ${component} icon is exported for subpath metadata readers`)
+}
 
 for (const line of notes) console.log(line)
 if (failures.length > 0) {

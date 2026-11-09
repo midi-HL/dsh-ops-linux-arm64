@@ -7,10 +7,12 @@
  * @module dsh-ops/build/lib/publish-dir
  */
 
+import { NIUBASH_PACKAGE_PATH, verifyNiubashTree } from '../../../lib/cli/niubash-payload.js'
+import { checkNiubash } from './niubash.mjs'
 import fs from 'node:fs'
 import path from 'node:path'
 import { packDirectory, writeReleaseRecords } from './pack.js'
-import { REPO_ROOT, copyEntry, log, mainManifest, npm, parseNpmJson, run, size, writeJson } from './util.js'
+import { REPO_ROOT, copyEntry, log, mainManifest, npm, parseNpmPackReport, run, size, writeJson } from './util.js'
 
 /**
  * The `optionalDependencies` a publish would inject.
@@ -67,16 +69,23 @@ export async function stepPublishDir(context, assembled) {
   // whitelist in `files` is then checked against it instead of being
   // re-implemented here (globs, always-included files, and ignore rules all
   // come from npm alone).
-  const dryRun = npm(['pack', '--dry-run', '--json'], { cwd: REPO_ROOT })
-  const [report] = parseNpmJson(dryRun.stdout, 'npm pack --dry-run')
-  const listed = (report.files ?? []).map((entry) => entry.path).sort()
-  if (listed.length === 0) throw new Error('npm pack --dry-run listed no files')
+  run(process.execPath, [path.join(REPO_ROOT, 'scripts/build.mjs')])
+  const dryRun = npm(['pack', '--dry-run', '--ignore-scripts', '--json'], { cwd: REPO_ROOT })
+  const report = parseNpmPackReport(dryRun.stdout, 'npm pack --dry-run', manifest)
+  const listed = report.files.map((entry) => entry.path).sort()
   for (const entry of listed) copyEntry(path.join(REPO_ROOT, entry), path.join(directory, entry))
 
   const whitelist = manifest.files ?? []
   const uncovered = whitelist.filter((entry) => !listed.some((file) => file === entry || file.startsWith(`${entry}/`)))
   if (uncovered.length > 0) {
     throw new Error(`the files whitelist names ${uncovered.join(', ')}, which npm would not publish`)
+  }
+
+  if (context.backend !== 'git-bash') {
+    const target = path.join(directory, NIUBASH_PACKAGE_PATH)
+    fs.rmSync(target, { recursive: true, force: true })
+    fs.cpSync(checkNiubash(context), target, { recursive: true, dereference: false })
+    verifyNiubashTree(target)
   }
 
   const publishable = { ...manifest, optionalDependencies: injectedOptionalDependencies(context) }

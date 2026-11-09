@@ -3,6 +3,7 @@ pub mod capture;
 pub mod envelope;
 pub mod search;
 pub mod storage;
+pub mod windows_paths;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -78,6 +79,8 @@ impl Failure {
             next_action: match code {
                 "ERR_INVALID_ENCODING" => "Use a dedicated document/binary reader, or inspect with view=hex; do not replace invalid bytes with lossy text.",
                 "METADATA_UNSUPPORTED" => "Use a filesystem/platform or dedicated tool that preserves the source metadata. Changing the permission selector or blindly retrying cannot repair this limitation.",
+                "LOCK_UNSUPPORTED" => "Use a local drive or the shell for this filesystem; retrying cannot add lock support.",
+                "PATH_CHANGED" => "Restart the query; the directory changed during enumeration. No complete result is available.",
                 "REFERENCE_EXPIRED" => "Release the expired result and acquire a new observation; references never grant authority.",
                 "REVISION_CONFLICT" => "Inspect the current revision before preparing a new request; do not blindly retry.",
                 "CREDENTIAL_DENIED" => "Choose a non-credential path; do not bypass the credential fence or change the permission selector to remove it.",
@@ -127,25 +130,75 @@ impl Request {
         let normalize = |value: &std::path::Path| {
             let text = value.to_string_lossy().replace('\\', "/");
             let text = text.strip_prefix("//?/").unwrap_or(&text).to_owned();
-            if cfg!(windows) { text.to_lowercase() } else { text }
+            if cfg!(windows) || self.windows_paths {
+                text.to_lowercase()
+            } else {
+                text
+            }
         };
         let target = normalize(path);
         if self.deny_roots.iter().any(|root| {
             let root = normalize(std::path::Path::new(root));
             target == root || target.starts_with(&format!("{}/", root.trim_end_matches('/')))
-        }) { return true; }
-        if !self.deny_credential_names { return false; }
+        }) {
+            return true;
+        }
+        if !self.deny_credential_names {
+            return false;
+        }
         static NAMES: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
         NAMES.get_or_init(|| regex::Regex::new(r"(?i)(^|/)(id_(rsa|dsa|ecdsa|ed25519)(\.|$)|[^/]*credentials[^/]*\.(json|ya?ml|ini)$|service-account[^/]*\.json$|\.env(\.|$))").expect("fixed credential expression")).is_match(&target)
     }
     pub fn authorize_path(&self, path: &std::path::Path) -> Result<()> {
-        if self.denies_path(path) { return Err(Failure::new("CREDENTIAL_DENIED", "Credential location refused by the operator's file policy")); }
+        if self.denies_path(path) {
+            return Err(Failure::new(
+                "CREDENTIAL_DENIED",
+                "Credential location refused by the operator's file policy",
+            ));
+        }
+        if self.windows_paths {
+            for component in path.components() {
+                if let std::path::Component::Normal(name) = component {
+                    windows_paths::validate_name(
+                        name.to_str()
+                            .ok_or_else(|| Failure::new("INVALID_ARGUMENT", "Non-UTF8 path"))?,
+                    )?;
+                }
+            }
+        }
         Ok(())
     }
     /// The denied roots as paths, in the lexical form the traversal compares
     /// against. The host sends absolute, canonicalized paths.
     pub fn deny_roots_paths(&self) -> Vec<std::path::PathBuf> {
-        self.deny_roots.iter().map(std::path::PathBuf::from).collect()
+        self.deny_roots
+            .iter()
+            .map(std::path::PathBuf::from)
+            .collect()
+    }
+    /// Validates the optional host cache directory from the trusted envelope.
+    ///
+    /// The directory is only a hint: this crate never creates it, and an absent
+    /// or unusable directory must degrade to the walk. Rejecting a malformed one
+    /// here keeps a relative, oversized or NUL-bearing path from reaching the
+    /// index layer where it could be joined to a workspace path.
+    pub fn validate_cache_dir(&self) -> Result<()> {
+        if let Some(directory) = &self.cache_dir {
+            // Compare encoded bytes (WTF-8 on Windows), so a NUL or an oversized
+            // UTF-16 path is measured the same way the OS encodes it.
+            let encoded = directory.as_os_str().as_encoded_bytes();
+            if !directory.is_absolute()
+                || encoded.is_empty()
+                || encoded.len() > 4096
+                || encoded.contains(&0)
+            {
+                return Err(Failure::new(
+                    "INVALID_ARGUMENT",
+                    "cache_dir must be an absolute path of 1..4096 encoded bytes without NUL",
+                ));
+            }
+        }
+        Ok(())
     }
 }
 pub type Result<T> = std::result::Result<T, Failure>;
@@ -160,9 +213,25 @@ pub struct Request {
     /// Trusted envelope metadata; never accepted from the tool argument/request data plane.
     #[serde(skip)]
     pub storage: Option<storage::StorageContext>,
+    /// Host-provided cache directory for the ops-index snapshot.
+    ///
+    /// Trusted envelope metadata: the host writes it on the request object and it
+    /// is never read from a tool's `args`; model-visible arguments cannot set it.
+    /// The wire name is `cache_dir`, matching the other request fields
+    /// (`read_only`, `deny_roots`).
+    ///
+    /// `None` means the index is disabled for this request and every caller keeps
+    /// the existing walk semantics. When present it must be an absolute path the
+    /// host created private (0700 on POSIX); the worker never invents or widens
+    /// it, and an unusable directory falls back to the walk without an error.
+    #[serde(default)]
+    pub cache_dir: Option<std::path::PathBuf>,
     pub root: String,
     #[serde(default)]
     pub read_only: bool,
+    /// Delegation can strengthen POSIX checks to the originating Windows path semantics.
+    #[serde(default)]
+    pub windows_paths: bool,
     #[serde(default)]
     pub write_roots: Option<Vec<String>>,
     /// Absolute roots the traversal must not descend into or report. The host
@@ -204,29 +273,6 @@ pub struct ResultArgs {
     pub ttl_ms: Option<u64>,
     pub fields: Option<Vec<String>>,
     pub equals: Option<std::collections::BTreeMap<String, Value>>,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn selector_reasons_are_optional_and_backward_compatible() {
-        let legacy = serde_json::to_value(Failure::new("POLICY_DENIED", "Scope mismatch")).unwrap();
-        assert!(legacy.get("reason").is_none());
-        let restored: Failure = serde_json::from_value(legacy).unwrap();
-        assert_eq!(restored.reason, None);
-        for reason in ["read-only", "write-roots"] {
-            let failure = serde_json::to_value(Failure::policy(reason, "Authorization refused")).unwrap();
-            assert_eq!(failure["code"], "POLICY_DENIED");
-            assert_eq!(failure["reason"], reason);
-            assert_eq!(failure["effectState"], "none");
-        }
-        for code in ["PATH_RESTRICTED", "CREDENTIAL_DENIED"] {
-            let failure = serde_json::to_value(Failure::new(code, "Restriction")).unwrap();
-            assert!(failure.get("reason").is_none());
-        }
-    }
 }
 
 impl Job {

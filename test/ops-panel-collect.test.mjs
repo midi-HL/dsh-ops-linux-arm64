@@ -17,7 +17,9 @@ import {
   parseAppendLog, projectEvent, resolvePanelConfig, safeSessionId,
 } from '../lib/panel/collect.js'
 import { renderPanelHtml } from '../lib/panel/render.js'
-import { apply } from '../lib/components/panel/index.js'
+import * as panel from '../lib/components/panel/index.js'
+import { legacyComponent } from './lib/legacy-component.mjs'
+const { apply } = legacyComponent(panel)
 import { assert, PACKAGE_ROOT, report, test, waitFor, withTempDir } from './lib/harness.mjs'
 
 /** A DSH home outside every fixture, so a fixture workspace is never "inside the home". */
@@ -326,6 +328,22 @@ await test('the sink refuses cwds and ids it cannot write safely', async () => {
   })
 })
 
+await test('a tool call and its result keep the turn the host event carries', () => {
+  const config = resolvePanelConfig({ capture: true, textLimit: 64 })
+  // A step number restarts at 1 in every turn, so the pair is only unambiguous with both fields.
+  const call = projectEvent({
+    type: 'tool/call', seq: 4, time: 11,
+    data: { turn: 2, step: 3, callId: 'call-1', name: 'ops_grep', arguments: '{}' },
+  }, config)
+  assert.equal(call.turn, 2, 'the projected tool call keeps its turn')
+  assert.equal(call.step, 3, 'the projected tool call keeps its step')
+  const result = projectEvent({
+    type: 'tool/result', seq: 5, time: 12,
+    data: { turn: 2, step: 3, message: { role: 'tool', source: { kind: 'tool', callId: 'call-1' }, isError: false, content: [] } },
+  }, config)
+  assert.equal(result.turn, 2, 'the projected tool result keeps its turn')
+})
+
 await test('projection and fold are pure enough to pin without a filesystem', () => {
   const config = resolvePanelConfig({ capture: true, textLimit: 64 })
   const projected = projectEvent({
@@ -423,14 +441,14 @@ await test('a real Cordis host mounts the row and the events reach the sink', as
     const { ctx } = await bootHost({ withTools: false, withSystemPrompt: false })
     const module = await import('../lib/components/panel/index.js')
     assert.equal(module.name, 'dsh-ops-panel')
-    const silent = await ctx.plugin(module, { capture: false })
+    const silent = await ctx.plugin(legacyComponent(module), { capture: false })
     const session = sessionFixture(directory, 'host-silent')
     ctx.emit('session/event', session, event('turn/end', { turn: 1 }, 0))
     await new Promise((resolve) => setTimeout(resolve, 50))
     assert.equal(fs.existsSync(path.join(directory, '.dsh-ops')), false, 'default off stays inert on a real host')
     await silent.dispose()
 
-    const live = await ctx.plugin(module, { capture: true, textLimit: 200, maxSessionBytes: 65536 })
+    const live = await ctx.plugin(legacyComponent(module), { capture: true, textLimit: 200, maxSessionBytes: 65536 })
     const captured = sessionFixture(directory, 'host-live')
     ctx.emit('session/event', captured, event('user/message', { source: { kind: 'user' }, content: [{ type: 'text', text: 'from the host' }] }, 0))
     ctx.emit('session/event', captured, event('turn/end', { turn: 1, reason: { kind: 'completed' } }, 1))

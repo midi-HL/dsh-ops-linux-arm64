@@ -7,6 +7,569 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.5.2] — 2026-11-08 — Patch release
+
+- Fix concurrent Windows Niubash preparation by verifying stable file identities instead of shared hardlink counts; retain preparing trees through disposal without replacing the zero-copy path or reverting 0.5.1's bounded retention.
+- 修复 Windows Niubash 并发准备：以稳定文件身份而非共享硬链接计数校验，准备中的执行树参与释放协调；保留零拷贝路径和 0.5.1 的有界保留修复。
+- Allow the merged settings row to persist and clear the selected Git Bash path in all four built-in modes.
+- 合并设置行可在四种内置模式中保存、清除选定的 Git Bash 路径。
+- Offline execution-cache reclamation discovers configured/same-volume roots and clears the verified tree's read-only/deny-delete seal before removal; Niubash failures give specific recovery commands instead of promising a retry fixes every failure.
+- 离线执行缓存回收覆盖显式及同卷根目录，删除前解除已验证树的只读/拒绝删除封印；Niubash 故障提供具体恢复命令，不再笼统承诺重试可修复。
+
+## [0.5.1] — 2026-11-08 — Patch release
+
+- Bound temporary-resource growth through ownership ledgers, deferred result-cache cleanup and explicit cache reclamation; preserve data-bearing snapshots and user content. Host output spills now have bounded retention rather than accumulating indefinitely.
+- 通过归属台账、结果缓存延迟清理与显式缓存回收约束临时资源增长，保留含数据的快照与用户内容；宿主输出 spill 采用有界保留，不再无限积累。
+- Packing an installed package no longer requires repository-only build scripts; source checkouts still build and verify their payload before packing.
+- 从已安装包重新打包不再依赖仓库专用构建脚本；源码检出打包前仍执行构建与载荷校验。
+- Include the integrated cross-platform index/query work and its verified Windows, Linux and macOS correctness fixes; the Windows MFT source remains opt-in.
+- 包含已集成的跨平台索引/查询及经过验证的 Windows、Linux、macOS 正确性修复；Windows MFT 来源仍须显式开启。
+
+- `ops_grep` gains `outputMode: "definitions"`: it returns only the lines where the matched identifier is declared (function, method, type, variable, macro), classified lexically in the native worker — no parser, no new dependency, same no-follow/credential/limit boundaries. `matched` counts every matching line and `total` the returned declarations, so a complete scan reports how many references it withheld; `multiline` and context flags are refused in this mode.
+- Add `dsh-ops cache status|reclaim`: report every temporary resource OPS can reproduce — kept provision downloads, Niubash staging/previous siblings, quarantined Bash IPC generations, audit-store writer temporaries and per-call execution trees — with per-row ownership evidence, `deleted`/`kept`/`unverified` decisions and byte totals. It previews by default, refuses `--yes` without `--all-hosts-stopped`, and never deletes on a name pattern, mtime or dead PID.
+- Failed provision downloads are registered under `<DSH_HOME>/dsh-ops/pending/` and reclaimed under a count/byte/age budget; a shell version is unpacked and verified in a staging sibling and only then renamed into place, so a failed or interrupted install leaves the previous version usable and no half-unpacked tree.
+- Niubash staging and previous siblings are verified before use: a complete staged tree is reused, a complete previous tree is restored when the target is missing, and trees that do not verify are kept. A refused previous-tree removal no longer reports a completed install as failed.
+- Offline Bash IPC cleanup reclaims quarantined copies beyond the newest two; audit-store `.tmp` writer files are swept when the store is opened for writing.
+- `ops_grep` 新增 `outputMode: "definitions"`：只返回匹配标识符处于声明位置的行（函数、方法、类型、变量、宏），由 native worker 做词法判定——不引入解析器与新依赖，沿用 no-follow/凭证/限额边界。`matched` 计所有匹配行、`total` 计返回的声明行，完整扫描可据此知道略过了多少引用；该模式拒绝 `multiline` 与上下文参数。
+- 新增 `dsh-ops cache status|reclaim`：报告 OPS 可再生的全部临时资源（保留的 provision 下载、Niubash staging/previous 兄弟目录、被隔离的 Bash IPC generation、审计写入临时文件和每调用执行树），逐项给出来源证据、`deleted`/`kept`/`unverified` 决策与字节数。默认预览，缺少 `--all-hosts-stopped` 时拒绝 `--yes`，绝不按名字、mtime 或死 PID 删除。
+- 失败的 provision 下载登记到 `<DSH_HOME>/dsh-ops/pending/` 并按数量/字节/年龄预算回收；shell 版本先在 staging 兄弟目录中解包校验、再 rename 就位，失败或中断不再留下半解包目录，也不再破坏旧版本。
+- Niubash 的 staging/previous 兄弟目录先验证后使用：完整 staging 直接复用、target 缺失时用完整 previous 恢复、无法验证的保留；删除 previous 失败不再把已完成的安装报成失败。
+- 离线 Bash IPC 清理会回收最新两份之外被隔离的副本；审计存储以写模式打开时清扫 `.tmp` 写入残留。
+- The per-call Niubash execution root now follows the payload's volume on Windows. When `DSH_OPS_EXEC_ROOT` is unset and `os.tmpdir()` sits on another volume, the clone is created below `<payload volume>\dsh-ops-exec`, and the default configuration keeps the zero-copy hardlink path instead of silently falling back to copying 785 MiB per call. That directory must be a real directory the current account owns — a junction, a directory owned by another account, or a path overlapping the payload is refused and the call falls back to the temp directory with the reason reported; an explicit `DSH_OPS_EXEC_ROOT` is validated the same way but fails loudly instead of being silently replaced. POSIX paths always reduce to one volume root, so a tmpfs `/tmp` still needs an explicit `DSH_OPS_EXEC_ROOT`.
+- 每次调用的 Niubash 执行根在 Windows 上改为跟随载荷所在卷：未设置 `DSH_OPS_EXEC_ROOT` 且 `os.tmpdir()` 与之不同卷时，克隆改在 `<载荷所在卷>\dsh-ops-exec` 下创建，默认配置因此保持零拷贝硬链接路径，而不是静默回退为每次调用复制 785 MiB。该目录必须是当前账户拥有的真实目录——重解析点、被其他账户拥有的目录、或与载荷路径重叠时会被拒绝，调用回退到临时目录并报告原因；显式设置的 `DSH_OPS_EXEC_ROOT` 走同样校验，但会直接报错，不会被静默替换。POSIX 路径一律归约为同一个卷根，因此 tmpfs 上的 `/tmp` 仍需显式设置 `DSH_OPS_EXEC_ROOT`。
+- Fixed the stale `niubash-consumer` assertion that still expected `all 10 checks passed` after `niubash-security-host` grew to 11 checks, which failed every full-gate run.
+- 修正 `niubash-consumer` 中过时的断言：`niubash-security-host` 增至 11 项检查后，consumer 仍断言 `all 10 checks passed`，导致完整门禁必挂。
+- An execution root below the workspace now clones by copy instead of hard links. The host sandbox labels the workspace tree with an inheritable Low mandatory label; a hard-linked payload would export that label onto the shared file object, and every later `niu.exe` image would run at Low integrity — full access included, where an unconfined shell must be able to write a Medium directory.
+- 位于工作区之下的执行根改为复制克隆而不是硬链接：宿主沙箱会给工作区树打上可继承的 Low 强制标签，硬链接会把该标签带到共享文件对象上，之后每次 `niu.exe` 镜像都会以 Low 完整性运行——包括 full access，而不受限的 shell 本应能写 Medium 目录。
+
+- Every merge gate is now a real gate. `validate-windows`, `validate-macos-intel` and `tools-trial` lost `continue-on-error` and joined `CI required`'s `needs` and failure loop; the bench smoke moved to `benchmark-gates.yml` (dispatch + monthly schedule) so `ci.yml` has no non-blocking job; `node-floor` runs on Linux and Windows; a new `rust-lint` job gates `cargo fmt --check` and `clippy -D warnings` on the pinned 1.97.1 toolchain (`native/rust-toolchain.toml`). `scripts/check-workflows.mjs` now states the blocking topology in one place (`EXPECTED_BLOCKING`) and fails when a job is unclassified, when `needs` disagrees, or when a failure-loop entry is missing; timeouts are tightened from measured p99.
+- Publishing is immutable. The release `gate` refuses a tag that was force-moved away from the built commit, requires a successful `CI required` check on the tagged commit, runs the same `verify-gate.mjs` as CI (restoring the skip-is-not-a-pass assertions and running the Niubash payload suites instead of skipping them), and `publish` only appends missing assets — no `--clobber`. `v0.5.0`'s four tag moves and post-publication asset replacement are the accident this prevents. The ruleset template also carries a merge queue, applied by the idempotent `scripts/apply-ruleset.mjs`.
+- 每个合并门禁都成为真正的门禁：`validate-windows`、`validate-macos-intel`、`tools-trial` 去掉 `continue-on-error` 并加入 `CI required` 的 `needs` 与失败判定循环；bench smoke 移到 `benchmark-gates.yml`（手动 + 每月调度），`ci.yml` 不再有非阻塞 job；`node-floor` 覆盖 Linux 与 Windows；新增 `rust-lint`，用 `native/rust-toolchain.toml` 钉住的 1.97.1 门禁 `cargo fmt --check` 与 `clippy -D warnings`。`scripts/check-workflows.mjs` 用 `EXPECTED_BLOCKING` 单一事实源校验“job 已分类 / needs 与循环一致”，并按实测 p99 收紧超时。
+- 发布不可变：release `gate` 拒绝被 force-move 的 tag，要求 tag commit 的 `CI required` 为 success，并改用与 CI 相同的 `verify-gate.mjs`（恢复“skip 不是通过”的断言，Niubash 载荷套件真跑）；`publish` 只补缺失资产，不再 `--clobber`。规则集模板带上 merge queue，由幂等的 `scripts/apply-ruleset.mjs` 下发。
+
+
+## [0.5.0] — 2026-11-06 — Stable release
+
+
+- This stable release summarizes the user- and developer-facing changes since v0.4.0, including the 0.4.1-0.4.4 patch releases and the 0.5.0 previews. **Breaking:** the 0.5 series targets DSH 0.2.2-rc.1 and later 0.2.2 releases only; older hosts are no longer supported.
+- 本正式版汇总自 v0.4.0 起（含 0.4.1-0.4.4 补丁版与 0.5.0 预览版）的用户与开发者相关变更。**破坏性变更**：0.5 系列仅面向 DSH 0.2.2-rc.1 起的 0.2.2 发行线，不再支持旧宿主。
+
+- The built-in Minimal, Standard, PTC and Cordis presets now hide the host PowerShell by default, still only while their Bash replacement is callable, the global gate allows it and the dsh-win-pwsh7 link is off; saved explicit values, custom presets and the global veto are unchanged.
+- 内置极简、标准、PTC 与创造预设默认隐藏宿主 PowerShell，但仍要求其 Bash 替代工具可调用、总闸允许且未开启 dsh-win-pwsh7 联动；已保存的显式值、自定义预设与总闸否决保持不变。
+
+- Plugin detail pages now show a curated introduction through the locale meta.detail entry instead of the repository README.
+- 插件详情页通过 locale 的 meta.detail 展示专门编写的介绍，不再直接使用仓库 README。
+
+- Align the runtime settings surfaces with the shipped Niubash payload. The status card reports the executor the host actually resolves per mode (packaged payload, provisioned copy, explicit path, PATH or well-known install) instead of an install inventory, names each mode when they disagree, and no longer claims no Bash exists while the packaged payload is running. The install preview now names the pinned Niubash archive, its digest, and the DSH_HOME target it really writes, replacing the leftover Git for Windows facts.
+- 设置页运行时卡片与随包 Niubash 对齐：状态按宿主对各模式的实际解析（随包载荷、托管副本、显式路径、PATH 或标准安装位置）报告执行器，模式之间不一致时逐项列出，不再在随包载荷可用时声称没有 Bash；安装预览改为真正会下载的固定 Niubash 归档、摘要与 DSH_HOME 目标，替代遗留的 Git for Windows 数据。
+
+- Add a Bash executor card to the row page. It switches every mode between the packaged Niubash rung (removing `bashPath`) and one Git Bash/MSYS executable, offers the host's scanned installations, accepts a typed absolute path, and validates the choice through the host before the revision-checked save writes `bashPath`; the CLI exposes the same choice as `bash-runtime niubash` and `bash-runtime git --path`.
+- 配置页新增 Bash 执行器卡片：在所有模式之间切换随包 Niubash（移除 `bashPath`）或一个 Git Bash/MSYS 可执行文件，列出宿主扫描到的安装、允许输入绝对路径，并在带版本校验的保存写入 `bashPath` 之前由宿主校验；CLI 以 `bash-runtime niubash` 与 `bash-runtime git --path` 暴露同一选择。
+
+- 运行时状态卡片不再把随包载荷当作“未安装”：只有在 DSH_HOME 真的存在托管副本、或随包载荷缺失需要恢复时才显示该行；同时排除 Windows Store 的 `WindowsAppsash.exe`（WSL 别名），它不会被当作 Git Bash。
+- The runtime card no longer treats the packaged payload as a missing installation: the managed-copy row appears only when one exists or when installing is the recovery, and the Windows Store `WindowsAppsash.exe` alias (WSL) is never offered as Git Bash.
+- 插件详情页说明进入设置页的路径：向下翻页后点击“包含的组件”内的“dsh-ops>”进入设置界面。
+- The plugin detail now names the navigation: scroll down, then open the settings page through “dsh-ops>” inside “Included components”.
+- The Windows default shell is now the complete official Niubash v1.5.0 payload shipped inside the package: the archive, source tree and every per-call execution copy are verified, a missing payload never falls back implicitly to ambient Bash, and managed install, status, select and remove commands are provided.
+- Windows 默认 Shell 改为随主包携带的完整官方 Niubash v1.5.0 载荷：逐条校验归档、源树与每次调用的执行副本，缺少载荷时不隐式回退到环境 Bash，并提供托管安装、状态、选择与卸载命令。
+
+## [Unreleased]
+
+- Run `prepack` through `bin/prepack.mjs`: a checkout still builds and checks the payload, while packing an installed package without the repository `scripts/` directory no longer fails with `MODULE_NOT_FOUND`.
+- `prepack` 改由 `bin/prepack.mjs` 执行：仓库检出仍会构建并校验载荷，而从已安装包（没有仓库 `scripts/`）重新打包不再以 `MODULE_NOT_FOUND` 失败。
+
+- Add the read-only `dsh-ops disk status [--json]` report: an ownership registry for every disk family the plugin writes (R1–R13), a bounded measurement that never follows links, per-category default actions, reclaim evidence with blocked reasons, and a validated `disk.status`/`disk.retention` config skeleton (the retention keys are a contract only; this release deletes nothing).
+- 新增只读的 `dsh-ops disk status [--json]`：为插件写入的每个磁盘家族（R1–R13）建立归属清单，提供不跟随链接的有界测量、按类别的默认动作、带阻塞原因的回收证据，以及经校验的 `disk.status`/`disk.retention` 配置骨架（retention 键只是契约，本版不删除任何内容）。
+
+- Keep zero-byte ERROR_MORE_DATA completions incomplete instead of treating them as end-of-data.
+- ERROR_MORE_DATA 零字节完成保留不完整状态，不再误报数据结束。
+
+- Record deferred result-cache cleanup for a root before its first caller can use it, retry it with bounded exponential backoff when workspace-write authority returns or at the next start-up, and reclaim idle roots that no session references. The native purge deliberately keeps the root, its scope directory and the lock; the new host-side sweep reclaims empty and lock-only roots by default, validates the whole directory structure before deleting a name, skips and reports any root with an unknown entry, excludes this process's live roots, and reports aggregate root/byte budget violations as blocked roots without ever deleting a root that still holds snapshot data. A session whose cache root was removed externally now recreates it instead of failing. `dsh-ops result-cache status|reclaim [--apply]` exposes the same bounded pass (#721).
+- 在首个调用可使用结果缓存根之前登记该根的延迟清理；恢复 workspace-write 授权或下次启动时按有界指数退避重试，并回收已无会话引用的空闲根。native purge 有意保留根目录、作用域目录与锁，新的宿主侧清扫默认回收空根与只剩 lock 的根，删除任何名字前校验完整目录结构，遇未知条目整根跳过并报告，排除本进程活跃根，并把聚合根数/字节预算超限的根标为 blocked，永不删除仍含快照数据的根。缓存根被外部删除后，会话会重建它而不是报错。`dsh-ops result-cache status|reclaim [--apply]` 暴露同一次有界清扫（#721）。
+- Clone each Windows Niubash execution tree by hardlink, seal the shared payload inodes read-only for the duration of the command, and verify the clone stat-only before spawn. The execution receipt records the clone mode, the copy-fallback cause when hardlinks are refused, the source manifest digest and the seal level; `DSH_OPS_EXEC_ROOT` moves the execution root parent (physically resolved against the payload) and `NIUBASH_VERIFY=deep` restores the full per-call re-hash.
+- 每调用的 Windows Niubash 执行树改为硬链接克隆，命令运行期间把共享载荷 inode 封印为只读，spawn 前只做 stat 校验。执行收据记录克隆模式、硬链接被拒时的复制回退原因、源清单摘要与封印级别；`DSH_OPS_EXEC_ROOT` 移动执行根父目录（按载荷做物理路径解析），`NIUBASH_VERIFY=deep` 恢复每调用全量重哈希。
+- Preserve PTC paging of session-owned legacy snapshots and batch audits through the shared result adapter, while Native still accepts only ref:// references. Refuse result storage when the active PTC parent's presentation changes or its inspection fails before cache IO. Await shared publication readiness and roll back permanent delayed initialization failures.
+- 共享 result 适配器保留 PTC 对会话自有旧快照与 batch 审计的分页，Native 仍仅接受 ref:// 引用；活动 PTC 父调用的展示变化或检查失败时，在缓存 IO 前拒绝存储。等待共享发布就绪，并回滚延迟初始化的永久失败。
+
+- Share a bounded registry-refusal cooldown across publication rows, retaining refused withdrawals and recovering owed registrations without another session event. Include accepted PTC dispatch settlements in TUI attention badges.
+- 各发布行共享有界注册拒绝冷却，保留被拒绝的撤销操作，并在没有新会话事件时恢复待发布项；TUI 提醒徽章计入已接受的 PTC 分派结算。
+
+- Roll back rejected discovery attachments without leaving registrations or selection observers, observe background failures, and verify settings persistence with Cordis 4.1.0. Render PTC guidance only after the public presentation waterfall confirms PTC; Native prompt text and wire declarations remain unchanged when PTC is enabled.
+- discovery 挂载失败时回滚注册与选择观察器，接住后台失败，并验证 Cordis 4.1.0 设置持久化；仅在公开展示 waterfall 确认 PTC 后生成专属引导，启用 PTC 不改变 Native 提示词与 wire 声明。
+
+- Restore the previous scoped PTC SDK after overlapping rows unload; stop superseded asynchronous attachments before publishing through disposed contexts. Conditional official replacements may remain model-visible: dispatch is guarded only by same-step OPS admission and current consumer authority, so an unavailable counterpart cannot disable both tools.
+- 重叠行卸载后恢复原作用域 PTC SDK；异步挂载被取代后停止发布，避免使用已释放上下文。条件性原版替换可能仍对模型可见；仅同一步骤准入 OPS 对应项且消费者当前有权限时守卫分派，避免对应项不可用时两边同时禁用。
+
+- Unify Native/discovery/PTC file and result publication with typed Outcome values and separate compact Native rendering; preserve fresh-read evidence, CAS and authority. Result uses one put/page/release schema, rejects Native put before IO, and defaults root to live cwd in both projections. Real source/grant changes conservatively invalidate all old steps sharing that registration; resolve again, never automatically replay.
+- Native/发现/PTC 文件与 result 统一发布，执行值为类型化 Outcome，Native 文本独立紧凑渲染，保留新鲜读取证据、CAS 与权威检查。result 统一 put/page/release schema，Native put 在 IO 前拒绝，两投影 root 均默认实时 cwd；真实来源/grant 变化保守使共享注册旧步全部失效，须重新 resolve，禁止自动重放。
+
+- Make the 0.5 series native to DSH 0.2.2-rc.1 and later 0.2.2 releases, dropping older hosts while retaining the DSH adapter. Use stable conditional discovery/PTC definitions, captured step admission for replacement guards, required live working directories and complete writable-root authority checks.
+- 0.5 系列原生面向 DSH 0.2.2-rc.1 起的 0.2.2 发行线，停止支持旧宿主但保留 DSH adapter；发现/PTC 使用稳定条件注册，替换 guard 使用本步准入集，必须提供实时工作目录，并完整复核额外可写根权限。
+
+- Accept package-manager hardlinks only in rehashed Niubash source payloads while requiring exclusive execution copies; cover a real offline pnpm hardlink consumer and keep gate orchestration fixtures independent of a host Git Bash installation.
+- Niubash 源载荷逐字节校验后兼容包管理器硬链接，执行副本仍要求独占文件；增加真实离线 pnpm 硬链接消费者验证，并让门禁编排测试不依赖宿主 Git Bash 安装。
+
+- Repin the rebuilt official Niubash 1.5.0 Windows x64 archive after checking its GitHub asset digest, published SHA256SUMS and complete member inventory; keep strict archive and per-file validation.
+- 核对 GitHub 资产摘要、官方 SHA256SUMS 与完整成员清单后，重新固定官方重建的 Niubash 1.5.0 Windows x64 归档；保留严格归档与逐文件校验。
+
+- Document binary locations and ownership for npm/marketplace/CLI updates, fixed-directory replacement, disposable execution copies, explicit legacy cleanup and shared-store limits; do not add unsafe automatic uninstall hooks.
+- 说明 npm/市场/CLI 更新的二进制位置与归属、固定目录替换、临时执行副本、显式旧载荷清理和共享缓存边界；不添加不安全的自动卸载钩子。
+
+- Preserve preparation-time Bash runtime and authority error codes separately from spawn diagnostics; recheck the absolute monotonic deadline before spawning even when synchronous legacy MSYS preparation blocks its timer. Preparation can still exceed the budget, but an expired call never starts a command.
+- 保留 Bash 准备阶段的运行时与权限错误码，与实际 spawn 诊断分开；即使同步 legacy MSYS 准备阻塞计时器，也在 spawn 前复核单调时钟绝对 deadline。准备本身仍可能超出预算，但已超时调用不会启动命令。
+
+- Embed the complete frozen official Niubash v1.5.0 Windows x64 payload as the default shell backend; verify source and per-call execution trees, include preparation in cancellation/deadlines, preserve results on cleanup failure, and integrate managed install/status/select/removal. Missing payloads never switch implicitly to ambient Bash; explicit Git Bash and POSIX system Bash remain supported. This full-package-first choice does not rule out rubash-only later.
+- Windows x64 默认 Shell 改为固定官方 Niubash v1.5.0 完整载荷；校验源树及每调用执行树，准备阶段纳入取消/超时，清理失败不覆盖结果，并接通托管安装/状态/选择/卸载。缺载荷不隐式切换环境 Bash，保留显式 Git Bash 与 POSIX 系统 Bash。这是先完整包的阶段选择，不否定后续 rubash-only。
+- Stop attempting an inherited-tool restriction for a Bash this consumer published into the Agent's own layer, which `restrict()` never masks: a preset that does not own the publication no longer reports `inherited bash restriction failed: tools.restrict() names unknown global tool "ops_bash"` on every reconcile (#652).
+- 不再对注册在 Agent 自有层的 Bash 尝试继承工具限制（`restrict()` 本就不遮蔽自有层注册）：不持有该发布的 preset 不再在每一轮 reconcile 重复报告 `inherited bash restriction failed: tools.restrict() names unknown global tool "ops_bash"`（#652）。
+- Keep `turn` on projected `tool/call` and `tool/result` records. A step number restarts at 1 in every turn, so a log row that carried only `step` could not be attributed to the turn it happened in (#644).
+- 投影后的 `tool/call` 与 `tool/result` 记录保留 `turn`。step 编号在每个 turn 都从 1 重来，只带 `step` 的日志行无法归到它实际发生的那个 turn（#644）。
+
+- Stop refusing a replaced official tool on behalf of a request that never carried its replacement: the guard now answers for the tool surface that request was assembled with instead of the registry's current view, so a replacement that landed after the request was captured is no longer enforced against the call the model can actually make (#578).
+- 不再因某次请求从未携带替换而拒绝被替换的官方工具：替换守卫改为按该请求组装时的工具面判定，而不是注册表当前视图；在请求快照之后才落地的替换，不再被用来拒绝模型实际能发出的那次调用（#578）。
+- Accept a Windows workspace that already grants the host's effective WRITE_OWNER prerequisite even when another account (for example BUILTIN\Administrators) owns it, require ownership only when preparation must add that ACE, and report an owner mismatch separately from a missing WRITE_OWNER (#651).
+- Windows 工作区若已具备宿主所需的有效 WRITE_OWNER，即使所有者是 `BUILTIN\Administrators` 等其它账户也直接使用；只有确实需要补该 ACE 时才要求所有者是当前用户，并把「所有者不匹配」与「缺少 WRITE_OWNER」分开报告（#651）。
+
+- Give an Electron self-runner Node mode instead of refusing every confined Bash call: a confined Windows sandbox runs the Desktop executable itself as the Node runner, so `ops_bash` could answer every command in `read-only` and `workspace-write` with `EXECUTOR_UNAVAILABLE`. Only a self-runner (a prepared argv whose first element is the Desktop executable) gains `ELECTRON_RUN_AS_NODE=1`; sandbox, policy and command are unchanged (#574).
+- 让 Electron 自跑 runner 进入 Node 模式，而不是拒绝所有受限档位的 Bash 调用：Windows 受限沙箱会把 Desktop 可执行文件自身当作 Node runner，导致 `read-only` 与 `workspace-write` 下 `ops_bash` 对任何命令都回答 `EXECUTOR_UNAVAILABLE`。现在只有自跑 runner（准备阶段 argv 的第一个元素即 Desktop 可执行文件）会补上 `ELECTRON_RUN_AS_NODE=1`，沙箱、策略与命令本身不变（#574）。
+- Give the discovery routing sentence an evaluable document condition — a `.pdf`, `.docx`, `.csv` or `.tsv` file whose reader is absent from the tool table — and state that creating, editing, rendering or exporting Office documents belongs to the host office skill, with a failed document read falling back to that skill instead of retrying the reader. Formats are named, never unpublished tool names; adds 279 characters (64 cl100k_base tokens) to the discovery-enabled prompt and changes no tool schema, so the pinned schema budgets stay valid.
+- 发现路由句改为可判定的文档条件：读取器不在工具表中的 `.pdf`、`.docx`、`.csv` 或 `.tsv` 文件；并写明创建、编辑、渲染或导出 Office 文档归宿主 office 技能，读取失败时回退到该技能而不是重试读取器。只写格式、不写未发布的工具名；发现开启时提示词增加 279 字符（64 个 cl100k_base token），工具 schema 未变，已固定的 schema 预算仍然有效。
+- Preserve trailing backslashes in install specs delegated through Windows cmd launchers without relaxing injection refusal. / Windows cmd 启动器委派安装参数时保留末尾反斜杠，且不放宽注入拒绝。
+
+- Key the hidden-surface snapshot by view identity instead of projecting every schema, so the replacement guard and the assemble waterfall stop deep-copying the whole catalog on every pass; the optional scope now reaches the same cheap path and a scope-less read describes the global layer.
+- 隐藏面快照改用视图条目身份作键，不再为每个定义投影 schema；替换守卫与装配瀑布因此不再每次检查都深拷贝整个工具目录，可选作用域走同一条低价路径，无作用域读取描述全局层。
+- Read the discovery guidance's callable set from the view instead of `schemas()`, removing one schema projection per prompt assembly.
+- 渐进披露指引的可调用集合改从视图读取，不再每条提示词装配投影一次 `schemas()`。
+- Read a scope's surface without throwing when the host publishes no projection: both readers answer empty, so a dispatch path never turns a missing `schemas()` into an exception.
+- 宿主不发布投影时，作用域表面读取不再抛错：两个读者都返回空，派发路径不会把缺失的 `schemas()` 变成异常。
+- Keep a forged entry out of the surface key: the projection fallback pairs each name with the description it already holds, so both separator characters are escaped before they enter the key, and a description that is not a string cannot throw on a dispatch path.
+- 防止表面键被伪造条目：投影兜底把每个名字与它已有的描述并列，因此两个分隔符在进入键之前先转义，非字符串的描述也不会在派发路径上抛错。
+- Read a scope's visible names from the entries its view publishes, not only from `keys()`: a view that offers entries without keys now reports its names, so the replacement planner stops treating every selected counterpart as absent there.
+- 作用域的可见名字改从视图条目读取，不再只认 `keys()`：只发布条目、不发布键的视图现在也能报出名字，替换计划不再把每个已选对应项当成缺失。
+- Refuse an install spec the Windows launcher line cannot carry: the profile installer quotes every argument it hands to `cmd.exe /s /c` and rejects the cmd metacharacters a `.cmd` expands again, so an `&` or `|` in `DSH_OPS_INSTALL_SPEC` can no longer become a second command. A `--dry-run` preview refuses the same input as the real run instead of reporting success.
+- 拒绝 Windows 启动器行承载不了的 install spec：配置档安装器给交给 `cmd.exe /s /c` 的每个参数加引号，并拒绝会被 `.cmd` 再次展开的 cmd 元字符，`DSH_OPS_INSTALL_SPEC` 里的 `&` 或 `|` 不再能变成第二条命令。`--dry-run` 预览与真跑拒绝同一批输入，不再报告成功。
+- Enforce zero-entry MFT result budgets before appending and report exact-fit results as complete.
+- MFT 结果预算在追加前检查，零预算不返回条目，恰好容纳的结果不再误报截断。
+- Preserve exact-head fork PR CI evidence with empty Actions associations, including approval-required runs, and report GitHub mergeability with its base identity separately from local merge probes (#495).
+- 保留 Actions 关联为空的 fork PR 准确 head CI 证据（含待批准运行），并将 GitHub 可合并性及其基线身份与本地合并预演分开报告（#495）。
+- Report PowerShell ConstrainedLanguage before workspace ACL preparation and preserve a named diagnostic without changing security policy (#458). / 工作区 ACL 准备前明确报告 PowerShell ConstrainedLanguage，并保留具名诊断，不改变安全策略（#458）。
+
+- Classify a confined Windows Bash preparation failure by the stage that failed (`bash-staging-failed`, `bash-generation-quarantine-failed`, `bash-lifecycle-lock-busy`, `bash-runtime-missing`, `bash-ipc-mismatch`), keep the actionable reason, and stop answering a recoverable staging interruption with the blanket "Do not retry" paragraph (#512).
+- 按失败阶段对 Windows 受限 Bash 准备失败分类（`bash-staging-failed`、`bash-generation-quarantine-failed`、`bash-lifecycle-lock-busy`、`bash-runtime-missing`、`bash-ipc-mismatch`），保留可操作原因，不再用"不要重试"的笼统文案回答本可恢复的 staging 中断（#512）。
+- Reclaim interrupted `stage-*` copies in the private Bash runtime cache after one hour, count them in the reported reclaimable bytes, and remove them together with a confirmed `bash-runtime clean-cache` (#512).
+- 一小时后回收私有 Bash 运行时缓存中被中断的 `stage-*` 副本，计入可回收字节，并在确认后的 `bash-runtime clean-cache` 中一并清除（#512）。
+- Document how to diagnose and recover an interrupted restricted-Bash staging or lifecycle lock.
+- 文档补充受限 Bash staging 中断与生命周期锁的诊断与恢复方法。
+- Document how to identify the failing dependency in `ERR_PNPM_UNKNOWN` / `UNKNOWN: unknown error, open '<path>'` reports without inferring an unverified filesystem or security-software cause, and state that the
+  `git+https`/source channel cannot produce a loadable plugin because `lib/` and the staged
+  `runtime/` are not in Git. The manifest gate now fails if `package.json` declares any
+  install-time lifecycle hook — `prepare`, `preprepare`, `postprepare`, `install`, `preinstall`
+  or `postinstall` — and names the gate's rule truthfully, so "fix the Git channel with `prepare`"
+  cannot land silently (#524).
+- 说明如何从 `ERR_PNPM_UNKNOWN` / `UNKNOWN: unknown error, open '<path>'` 报告确定失败依赖，而不推断未经验证的文件系统或安全软件根因；同时明确直接 `git+https`/未构建源码通道无法提供完整发行物，因为
+  `lib/` 与已 stage 的 `runtime/` 不在 Git 里。清单门禁现在会在 `package.json` 声明任何
+  安装期生命周期钩子时失败——`prepare`、`preprepare`、`postprepare`、`install`、
+  `preinstall`、`postinstall`——并按实际行为描述该规则，使「用 prepare 修 Git 通道」
+  无法静默落地（#524）。
+- Preserve completed, failed and pending per-file receipts when multi-file replacement stops after a publication failure; retain uncertain effects and never offer a write replay cursor. Clarify the required literal `expectedRevision: "absent"`, document read/edit/write/replace contracts, and verify same-call PTC read-to-edit CAS and stale reads (#419, #421, #422).
+- 多文件替换在发布失败后保留已完成、失败和待处理文件的回执，保留未知副作用且不提供重放写入游标。明确必填字面量 `expectedRevision: "absent"`，补充读取、编辑、写入、替换契约，并用真实 PTC 同轮读改与过期读取回归验证 CAS（#419、#421、#422）。
+
+- Keep one build serving both ends of the supported range. The whole suite now passes on the locked `0.2.0-rc.2` graph and on the `0.2.1-rc.5` graph over the same source, and the compatibility assertion names rc.5 alongside the earlier ones. The precheck case that needed the removed `both` mode now pins the seam instead: a registry mode the precheck cannot answer from the scope chain still owes a probe.
+- 同一份构建同时服务受支持范围的两端：整套测试在锁定的 `0.2.0-rc.2` 依赖图与 `0.2.1-rc.5` 依赖图上分别全绿，兼容性断言也把 rc.5 与更早版本并列。原先需要已删除的 `both` 模式的预检用例改为锁住接缝：作用域链解析不出的注册表模式仍要付一次探针。
+- Track the official 0.2.1-rc.5 line: `@deepseek-ai/dsh-*` moves to `0.2.1-rc.5` and Cordis to `4.0.5`. `ToolPresentationMode` no longer carries `both`, so every presentation list, loader description and doc sentence names only `native` and `ptc`; `ConfigFormSnapshot` no longer carries `mode`, so a Client form is editable when it is ready and writable; and `run_code` now asks the host for the directory it executes in, which the test hosts provide only where a suite really runs code. Test fixtures follow rc.5 as well: `invoke` names its `PeerScope`, a user message carries its `source`, and the gateway client is resolved through its condition exports.
+- 跟进官方 0.2.1-rc.5 线：`@deepseek-ai/dsh-*` 升到 `0.2.1-rc.5`，Cordis 升到 `4.0.5`。`ToolPresentationMode` 不再有 `both`，因此所有展示模式清单、加载器描述与文档句子只写 `native` 与 `ptc`；`ConfigFormSnapshot` 不再有 `mode`，Client 表单改为「就绪且可写即可编辑」；`run_code` 现在会向宿主索取执行目录，测试宿主只在真正运行代码的套件里提供。测试夹具同样跟进 rc.5：`invoke` 必须指明 `PeerScope`，用户消息必须携带 `source`，gateway 客户端按其条件导出解析。
+- Retire the last `both` traces rc.5 invalidated: the presentation-mismatch diagnostic no longer offers a mode that does not exist, the docs name only `native` and `ptc`, test scopes request a real presentation instead of the removed one, and the discovery-incremental case that needed a mixed scope retires with it. A ready Host document that refuses writes is now asserted to stay uneditable.
+- 清理 rc.5 使 `both` 失效后残留的痕迹：展示不匹配诊断不再建议一个已不存在的模式，文档只写 `native` 与 `ptc`，测试作用域改为申请真实存在的展示模式，需要混合模式的 discovery-incremental 用例随该模式一起退役；并补上「就绪但拒绝写入的宿主文档不可编辑」的断言。
+
+- Bound an unattributed `tools/change` to one representative probe: the registry notification may name the affected scope, and when the host names none only one session is re-probed synchronously while the rest stay stale until their next `agent/pre-step` or tool execution, both of which check freshly regardless of cached state. `system-prompt/change` takes the same lazy path, a scope the host names but no session knows falls back to the conservative path, and the representative probe no longer cascades into its own scope family. This removes the one-full-assembly-per-live-session cost that made session creation scale with the live count (198 live sessions: 23,143ms and 1,393 assemblies before, 7,097ms and 400 after with only the discovery path bounded; zero live sessions are unchanged at 103-129ms).
+- 未点名作用域的 `tools/change` 收敛为只同步重探一个代表会话：宿主点名时只失效该作用域及其后代；未点名时其余条目保持过期，在各自下一个 `agent/pre-step` 或工具执行时重新观测——这两处无论缓存状态如何都会做新鲜检查。`system-prompt/change` 走同一条惰性路径；宿主点名但无任何会话认识的作用域改走保守路径；代表会话的探测不再连带重探它自己的作用域族。这去掉了「每个存活会话一次完整装配」的成本（198 存活会话：修复前 23,143ms / 1,393 次装配，仅收敛 discovery 路径后 7,097ms / 400 次；零存活会话时两者一致，103-129ms）。
+- Reduce the first Native-to-PTC switch from seven prompt assemblies to four in the 150-tool host fixture. Keep full host presentation probes and their Native withdrawal, but do not rebuild a private probe after withdrawal; rebuild a public assembly only when its PTC publication generation is stale, so next-step SDK declarations still arrive exactly at request two (#490).
+- 在 150 工具宿主夹具中，首次 Native→PTC 切换的提示词装配从 7 次降到 4 次。保留完整宿主展示探针及其 Native 撤回，但私有探针撤回后不再重建；公共装配仅在 PTC 发布代次过期时重建，下一请求的 SDK 声明仍恰好在第二次请求出现（#490）。
+- Stop spending a presentation probe per session on an unattributed `tools/change`. A registration the host reports without naming a scope cannot move a presentation mode — only `presentAs` does — so the publish still runs, but the verdict is deferred and the next real probe confirms it at pre-step. A `system-prompt/change` since the last re-derivation is the evidence that a mode may have flipped, and only then does the next change owe that probe.
+- 未点名作用域的 `tools/change` 不再逐会话花一次展示探针。宿主报告但没有点名作用域的注册不可能移动展示模式——只有 `presentAs` 会——所以发布照常进行，但判定被延后，由下一次真实探针在 pre-step 确认。自上次重推导以来出现过 `system-prompt/change` 才是「模式可能已翻转」的证据，只有那时下一次变化才欠这次探针。
+- Answer a probe whose scope resolves to a non-`ptc` registry mode from the scope chain instead of assembling: `modeFor` is the same source the collapsed section reads, so an assembly for such a scope can only return the verdict already held. A mixed-native deployment still probes, because only `ptc` renders the collapsed section.
+- 作用域链解析出的注册表模式不是 `ptc` 时，直接由链上答案回答而不装配：`modeFor` 正是折叠段落读取的同一来源，对它做装配只能得到已经持有的判定。混合 Native 部署仍照常探测，因为只有 `ptc` 会渲染折叠段落。
+- Scan a scope's Native providers against one registry view: the scan asked the registry once per provider whether that scope resolves the provider's own definition, and `tools.get(name, scope)` rebuilds the entire scope view on every call, so a publish that touches every live scope rebuilt the view once per provider per scope — 82,365 rebuilds for one unattributed `tools/change` over 198 live sessions. Reading the view once and looking the names up in the map it returns removes that whole factor: one unattributed change over 198 sessions drops from 3,970 assemblies' worth of rebuilds and 8,580ms to 1 assembly and 218ms, and `create-ptc` from 1,194 to 6.5 assemblies. A host that serves no view still resolves through `get()`, as `surfaceOf` already does.
+- 作用域的 Native provider 扫描改为只读一次注册表视图：原先对每个 provider 都要问一次该作用域是否解析到它自己那份定义，而 `tools.get(name, scope)` 每次调用都会重建整个作用域视图，于是「一次触及所有存活作用域的发布」的重建次数是「provider 数 × 作用域数」——198 个存活会话上的单次未点名 `tools/change` 就重建了 82,365 次。改为读一次视图、在它返回的 Map 里逐个查名，整个因子消失：198 会话上单次未点名变化从相当于 3,970 次装配的重建量、8,580ms 降到 1 次装配、218ms，`create-ptc` 从 1,194 次装配降到 6.5 次。宿主不提供视图时仍走 `get()` 解析，与 `surfaceOf` 的既有做法一致。
+- Reject an unadapted Electron self-runner before it can report empty Bash success; preserve legitimate empty output and explicitly prepared host runners (#484).
+- 在未适配的 Electron 自身 runner 启动前拒绝执行，避免 Bash 空输出假成功；保留合法空输出与宿主显式准备的 runner（#484）。
+- Name Windows `STATUS_DLL_INIT_FAILED` exit values without claiming that commands had no effects or that the host startup failure was repaired (#417).
+- 为 Windows `STATUS_DLL_INIT_FAILED` 退出值提供明确诊断，不将命令效果误报为无，也不宣称宿主启动失败已修复（#417）。
+- Stop optional Windows result caching from invoking workspace ACL preparation or confinement in full-access sessions on legacy hosts. Cache-only hosts retain spill, paging and cleanup; legacy hosts return explicit bounded output when storage is unavailable (#411).
+- 修复旧版 Windows 宿主的完全访问会话仅为可选结果缓存而准备工作区 ACL 或请求沙箱的问题。支持专用缓存准备的宿主仍可溢出、分页和清理；旧宿主缓存不可用时返回明确有界的结果（#411）。
+
+- Transfer the owned Bash registration when an agent changes preset, before the new consumer publishes. PTC-to-Standard/Minimal switches no longer lose `ops_bash` to a same-layer registration collision; the retired consumer cannot remove its successor or execute a retained callback. Foreign same-name providers remain untouched.
+- 切换预设时，在新消费者发布前交接所属 Bash 注册。PTC 切到 Standard/Minimal 不再因同层同名冲突丢失 `ops_bash`；已退役消费者不能移除接任者或继续执行保留的回调，也不会撤销其它插件的同名工具。
+- Let Windows compute and verify ordinary parent DACL inheritance for create-only files after private staging is complete, preserving inherited denies and creator-owner rules so restricted workspace processes can edit, rename and remove newly written files. Existing overwrite/copy and private-cache ACL contracts remain separate (#420).
+- 仅新建文件完成私有暂存后，由 Windows 计算并验证普通父目录 DACL 继承，保留继承拒绝与创建者规则，使受限工作区进程可编辑、重命名和删除新文件；覆盖、复制与私有缓存的 ACL 契约保持独立（#420）。
+- Overlap at most two bounded native reads inside `ops_read_files`, retaining request order, duplicate ranges, full revisions, per-file errors, credential/no-follow checks and ordered aggregate capture. Single-file reads avoid thread setup; the worker deadline remains authoritative (#477).
+- `ops_read_files` 内部最多重叠两个有界原生读取，保留输入顺序、重复范围、完整 revision、逐文件错误、凭证/no-follow 检查和有序总预算捕获；单文件不启动线程，仍以 worker 截止为准（#477）。
+- Record the evidence and go/no-go decisions for revision/anchor editing, symbol maps, and review tooling; retain current production contracts while defining the conditions for reconsideration (#424, #459, #534).
+- 记录 revision/anchor 编辑、符号地图与审阅工具的证据和推进决策；保留现有生产契约并明确重新评估条件（#424、#459、#534）。
+- Prepare search glob segments once per request and add opt-in, content-free worker stage timing with a same-corpus comparison runner; retain security checks, scan budgets and completeness semantics (#474).
+- 搜索 glob 路径段改为每请求准备一次，增加不含正文的可选 worker 阶段计时及同语料对比 runner；保留安全检查、扫描预算与完整性语义（#474）。
+- Accept npm 12 package-keyed pack reports alongside earlier arrays through one strict release/source-closure parser, preserving post-repair tar hashes and provenance (#560).
+- 发布打包与源码闭包检查共用严格解析器，同时支持 npm 12 按包名组织的打包报告与此前数组格式，保留 tar 修复后的摘要和 provenance 校验（#560）。
+- Add an opt-in WSL readonly file route for same-distribution UNC workspaces, preserving Windows credential/path restrictions, backend-bound search cursors and Windows-owned result storage; see [WSL file reads](wsl-readonly.md) (#498).
+- 为同发行版 UNC 工作目录增加可选 WSL 只读文件路由，保留 Windows 凭据和路径限制、后端绑定搜索游标及 Windows 结果存储所有权；见 [WSL 只读文件操作](WSL只读文件操作.md)（#498）。
+- Verify WSL fallback against the original Windows bounded result when a legacy host has no cache-only capability; keep reference paging mandatory when that capability exists (#411, #498).
+- 旧宿主缺少仅缓存准备能力时，将 WSL 回退结果与原 Windows 有界结果对比；宿主提供该能力时，仍必须验证引用分页（#411、#498）。
+
+- Complete the manifest namespace inventory with PTC batch/SDK-loading and Native discovery controls; validate exact capability coverage without changing scoped publication or model schemas (#484).
+- 补齐清单命名空间中的 PTC batch/SDK 加载与 Native 发现控制入口，并校验能力目录完整性；不改变作用域发布或模型 schema（#484）。
+- Keep Native file routing separate from the independent Bash prompt section, so resident Native + Shell consumers do not repeat Bash guidance or advertise host PowerShell routing. Keep deployment guidance single-owned across Bash, Native and discovery sections, including withdrawal and reload.
+- 将 Native 文件路由提示与独立 Bash 提示段分开，避免 Native + Shell 常驻消费者重复 Bash 指导或把 Bash 宣传为宿主 PowerShell 路由。部署指导在 Bash、Native 与发现提示段之间仅保留一份，并覆盖撤回与重载。
+- Update preset hints and rendered settings UI to describe default Bash/PowerShell coexistence; hiding host PowerShell remains an explicit choice.
+- 更新预设提示和渲染后的设置界面，说明 Bash 与 PowerShell 默认共存；隐藏宿主 PowerShell 仍需显式选择。
+- Document the limits of Windows payload checks and read-only evidence for Low-integrity images, mixed MSYS startup, antivirus correlation, heredoc and approval reports; do not present missing reproductions as fixes (#446, #439, #425, #426).
+- 补充 Windows 载荷检查边界，以及 Low 程序标签、混合 MSYS 启动、杀软相关性、heredoc 和审批反馈的只读取证；缺少复现不能标为已修复（#446、#439、#425、#426）。
+- Clarify step-tail snapshot handoff: disposal withdraws pending contributions only before the batch returns from `agent/pre-step`; an already handed-off batch may still be admitted and logged, while replacements wait for a later nonempty batch.
+- 明确步骤尾部快照交接：释放只会在 batch 从 `agent/pre-step` 返回前撤回等待中的贡献；已经交接的 batch 仍可能被接纳并写入日志，替代注册等待后续非空 batch。
+- Add scoped job-wait guidance after a successful standalone long sleep, with zero added prompt bytes before the trigger, Native/PTC coverage and live consumer/prompt-policy withdrawal (#507).
+- 成功完成独立长延时后，按作用域提示使用宿主 job 等待；触发前不增加提示词字节，覆盖 Native/PTC 并跟随消费者/提示策略撤回（#507）。
+- Honor configured PTC `allowedTools` when resident APIs are disabled; only `result` remains an implicit selection exception, with the directory and loader sharing the same pool.
+- 关闭常驻 API 时遵守 PTC 的 `allowedTools` 配置，仅保留 `result` 隐式选择例外，目录与加载器共用同一允许池。
+- Build Windows Bash IPC proxies from non-ASCII checkout/tool/temp paths using ASCII batch instructions and Unicode environment values; reproducible linker metadata keeps identical sources byte-identical across checkout paths (#553).
+- Windows Bash IPC 构建以 ASCII 批处理与 Unicode 环境变量支持非 ASCII 检出/工具/临时路径，并使用可复现链接元数据，使相同源码跨检出路径生成相同字节（#553）。
+- Detect the `dsh-win-pwsh7` companion from the profile that installed this package, so the row's link also resolves in the host process, which gets no `DSH_PROFILE_DIR`; a save no longer freezes a detected link into an explicit value, while a flipped link is always written.
+- 从安装本包的 profile 探测 `dsh-win-pwsh7` 联动，宿主进程没有 `DSH_PROFILE_DIR` 也能判定；保存其它开关不再把「跟随检测」写成显式值，而手动拨动联动开关一定落盘。
+- Name the row setting instead of the removed Compatibility mode when an official tool has an OPS replacement.
+- 官方工具被 OPS 替代时，拒绝信息改指行设置，不再提已删除的兼容模式。
+- Stop the discovery refresh/reconcile feedback loop (#526). A tool or prompt
+  registry change made while this plugin's own presentation probe is assembling
+  is now attributed to that probe instead of being applied inline, and each
+  external activation may spend at most one trailing reconciliation; a component
+  that keeps mutating the registry during assembly gets a single warning and its
+  change is dropped. One external `tools/change` now costs one reconcile (two
+  with a one-off in-assembly change) instead of an unbounded boot-time storm.
+- 修复 discovery 的 refresh/reconcile 自激回路（#526）。本插件自身展示探针装配期间发生的
+  工具或 prompt 注册表变更，现在归属到该探针而不再内联应用；每次外部触发最多追加一次尾随
+  收敛；在装配期间持续修改注册表的组件只告警一次，其变更被丢弃。一次外部 `tools/change`
+  现在只产生一次收敛（装配内有一次性变更时为两次），不再是无界的启动期风暴。
+- Bound a presentation withdrawal to one rebuild per request: `claimPresentationRebuild` in `src/publication/presentation.ts` lets the first hook that retires tools re-assemble, and every later hook in the same request keeps the assembly it already holds. Two hooks that each withdrew in one request used to re-assemble in turns, which is the spin behind an idle Host burning a core.
+- 将展示撤回限制为每个请求最多重建一次：`src/publication/presentation.ts` 的 `claimPresentationRebuild` 只允许第一个撤回工具的发钩重建，同一请求中后续钩子保留已有装配。此前两个钩子在同一请求里交替重建，正是空闲宿主吃满单核的自旋。
+- Stop the session shell hook from waiting on reconciles scheduled after its own assembly started, and let it answer an inspection instead of waiting for a publication an inspection cannot change.
+- 会话 shell 钩子不再等待自身装配开始之后才排队的 reconcile；探测（inspection）不再等待它无法改变的发布。
+
+- Add an opt-in download guard with operator-owned Bash/PowerShell alternatives, conservative literal-command detection and actual Native/PTC dispatch coverage. Unconfigured, ambiguous and streaming calls stay unchanged; replacements are never executed automatically (#506).
+- 新增可选下载约束，由用户配置 Bash/PowerShell 替代下载命令，保守识别字面命令并覆盖真实 Native/PTC 派发。未配置、含歧义或流式输出的调用保持原状，绝不自动执行替代命令（#506）。
+- Inspect Windows Bash image and ancestor integrity labels in `ladder`, warn about Low labels, and keep unreadable labels and runtime health distinct from static payload compatibility (#446).
+- `ladder` 只读检查 Windows Bash 映像与祖先路径的完整性标签，告警 Low 标签，并区分不可读标签、运行时健康和静态载荷兼容性（#446）。
+- Record every host subprocess spill path the plugin settles in `$DSH_HOME/ops-spill-ledger.jsonl` and reclaim only those ledger-owned files: a TTL window (default 30 days), an oldest-first total byte budget (default 256 MiB), at most 64 files per bounded pass, plus `bash-runtime spill-report [--json] [--sweep --yes]` and a one-line `bash-runtime status` summary. The provider's `dsh-subprocess-*` directories are never removed, unrecorded files and other providers' paths are never touched, and a failed unlink keeps its entry with `lastError` for the next pass (#720).
+- 在结算点把宿主 subprocess 的每个 spill 路径登记到 `$DSH_HOME/ops-spill-ledger.jsonl`，并且只回收账本内的文件：TTL 窗口（默认 30 天）、最旧优先的总字节预算（默认 256 MiB）、单次有界 pass 最多 64 个文件，并提供 `bash-runtime spill-report [--json] [--sweep --yes]` 与 `bash-runtime status` 的一行摘要。永不删除宿主的 `dsh-subprocess-*` 目录，不触碰未登记文件与其它 provider 的路径，删除失败时保留条目与 `lastError` 供下一轮重试（#720）。
+
+## [0.5.0-alpha3] — 2026-10-30 — Unstable development prerelease
+
+- This unstable prerelease summarizes changes since v0.5.0-alpha2; use an isolated test environment.
+- 本不稳定预发布版汇总自 v0.5.0-alpha2 以来的变更，建议仅在隔离测试环境使用。
+
+- Assemble built-in and explicit preset consumers through one responsibility-based pipeline, with exact custom-preset Switch cards and independent residency, discovery, Bash, file replacement and host-shell hiding. Preserve saved intent under global gates and keep Native discovery independent of typed PTC loading.
+- 内置与显式预设通过同一个按职责组织的流程装配；自定义预设提供精确身份的原生开关卡片，常驻、发现、Bash、文件替换和宿主 Shell 隐藏独立控制。总开关保留保存意图，Native 发现与类型化 PTC 加载独立。
+- Cancel owned calls on consumer/Agent/preset/presentation/authority retirement, return no-effect cancellation before dispatch and retire external publication without indefinitely waiting for non-cooperative provider promises. Unfinished foreign effects remain unknown.
+- 消费者、Agent、预设、展示或权限撤销时取消所属调用；派发前取消返回无效果结果，外部发布撤回不无限等待不协作的提供者 promise，未完成的外部副作用仍明确为未知。
+- Document the single-row migration, responsibility boundaries and removed dangling Compatibility export; Native text and PTC typed projections retain separate contracts over shared worker execution.
+- 更新单行迁移、职责边界和悬空兼容导出的移除说明；Native 文本与 PTC 类型化投影共享 worker 执行但保留不同契约。
+
+- Preserve Unix worker executable modes in Windows-built release tarballs and reject invalid runtime TAR members before publishing checksum records.
+- 修复 Windows 构建发布包丢失 Unix worker 执行位，并在生成校验记录前拒绝异常运行时 TAR 成员。
+
+- Add the real-corpus `calls` comparison: host-dispatched official `grep`/`glob` versus OPS, or two OPS builds in one process, with a declared corpus shape, a content identity and coverage recorded per arm. Timings stay manual evidence and never gate CI.
+- 新增真实语料 `calls` 对比：真实 host 派发的官方 `grep`/`glob` 对 OPS，或同进程内两套 OPS 构建；语料 shape、内容身份与覆盖率按臂记录。耗时仍为人工证据，不进入 CI 门禁。
+
+## [0.5.0-alpha2] — 2026-10-30 — Unstable development prerelease
+
+- This unstable development prerelease summarizes changes since v0.5.0-alpha1. Use an isolated development or test environment rather than replacing a stable installation.
+- 本不稳定开发预发布版汇总自 v0.5.0-alpha1 以来的变更，仅建议在隔离开发测试环境中使用，不建议替换稳定安装。
+
+### Improved
+
+- Reconcile official-tool replacement incrementally: plan only the newly created Agent, narrow attributed tool changes to affected Agents and coalesce event bursts, avoiding tool-view scans across all open sessions on each session creation (#464).
+- 增量协调原版工具替换：只规划新建 Agent，将有归属的工具变更限定到受影响 Agent，并合并突发事件，避免每次新建会话都扫描所有已开会话的工具视图（#464）。
+- Safely reuse private Windows Bash IPC payload generations by executable content identity, protect active generations with durable leases and expose cache usage plus preview-first offline cleanup with explicit stopped-host confirmation (#492).
+- 按可执行内容身份安全复用 Windows 私有 Bash IPC 载荷代次，以持久租约保护活动代次，并显示缓存占用、提供默认预览且需明确确认宿主已停止的离线清理（#492）。
+
+### Fixed
+
+- Follow the live session working directory for Native file paths, Bash workdirs and default Native result roots; retain workspace write-authority boundaries and explicit stored-reference roots, and report directory provenance (#475).
+- Native 文件路径、Bash 工作目录与 Native 结果默认根目录跟随会话实时工作目录；保留工作区写权限边界与显式存储引用根目录，并报告目录来源（#475）。
+- Read classic-xref PDFs whose outline items contain `/Prev`; continue rejecting incremental PDFs when `/Prev` or `/XRefStm` appears in the trailer (#432).
+- 修复大纲条目含 `/Prev` 的传统交叉引用表 PDF 无法读取的问题；trailer 中含 `/Prev` 或 `/XRefStm` 的增量 PDF 仍被拒绝（#432）。
+- Prepare and purge Windows result caches through the optional cache-only host capability without workspace grants when available; preserve the legacy path on older hosts (#465).
+- 宿主提供可选的仅缓存准备能力时，通过该能力准备和清理 Windows 结果缓存，不授予工作区访问权限；旧宿主保留原有路径（#465）。
+- Vendor the PTC SDK declaration generator so builds do not depend on the removed host `jsonSchemaToTs` export. This fixes build code generation only; it does not expand the declared host compatibility range or establish full DSH 0.2.2 support (#485).
+- 内置 PTC SDK 声明生成器，使构建不再依赖宿主已移除的 `jsonSchemaToTs` 导出。此项仅修复构建代码生成，不扩大声明的宿主兼容范围，也不代表完整支持 DSH 0.2.2（#485）。
+
+### Tests
+
+- Add deterministic Windows replace refusal and sidecar-lock reader regressions from PR #128, with explicit cross-platform skips and an honest coverage map.
+- 提取 PR #128 的 Windows replace 拒绝与 sidecar 锁读取确定性回归，准确接入跨平台 skip，并记录覆盖与未测范围。
+
+- Ship the Linux x64 native worker as a `x86_64-unknown-linux-musl` static-pie binary so the artifact carries no `GLIBC_*` floor: the previous gnu build required `GLIBC_2.30`/`GLIBC_2.32` and failed on glibc 2.28 hosts. Add `dsh-ops build-ptc --target <rust-triple>` (staging from `native/target/<triple>/release`) and assert the static link in CI and release.
+- Linux x64 原生 worker 改为 `x86_64-unknown-linux-musl` 静态链接（static-pie），发布产物不再带 `GLIBC_*` 下限：此前的 gnu 构建要求 `GLIBC_2.30`／`GLIBC_2.32`，在 glibc 2.28 主机上无法执行。新增 `dsh-ops build-ptc --target <rust-triple>`（从 `native/target/<triple>/release` 取产物），并在 CI 与发布流程中断言静态链接。
+
+## [0.5.0-alpha1] — 2026-10-30 — Unstable development prerelease
+
+- This is an unstable development prerelease relative to v0.4.4, intended for isolated testing rather than stable production use. The single-row configuration is a breaking migration: move saved legacy-row settings into `dsh-ops`; resident tools and dynamic loading are independent.
+- 本版本为相对 v0.4.4 的不稳定开发预发布版，仅建议隔离测试，不建议稳定生产环境使用。单行配置属于破坏性迁移：旧行设置需迁入 `dsh-ops`；常驻工具与动态加载独立控制。
+
+- Keep explicit preset integration mounts independent of retired Loader rows; migrate release scope and benchmark switches to the merged row, and retain component behavior checks through a mount-local test fixture.
+- 显式预设集成挂载不再被旧 Loader 行退役防护误拦截；发布范围及 benchmark 开关迁移至单行配置，旧组件行为测试使用仅挂载期间有效的局部夹具。
+
+- Separate resident OPS file tools from dynamic loading for Standard, PTC and Cordis; Minimal has no resident-tools option. Preserve on-demand baseline access when residency is off and connect the PTC discovery switch.
+- 标准、PTC、创造模式新增独立的 OPS 常驻工具开关，与动态加载相邻；极简模式不提供常驻选项。关闭常驻时基础 API 仍可动态加载，并接通 PTC 动态开关。
+
+- Verify the hide-official assembled surface through the scope view when the host withholds the tool array. DSH 0.2.1 transforms a `PromptPresentation` in `system-prompt/assemble` and attaches `tools` afterwards, so the guard's `Array.isArray(result?.tools)` threw `assembled tool schemas unavailable` for every scoped assembly once `replaceTools` was non-empty — every turn was blocked, not one tool. A host that still supplies schemas keeps the stricter assembled-surface assertion (#413).
+- 宿主不再提供工具数组时，hide-official 改由作用域视图核验组装面。DSH 0.2.1 的 `system-prompt/assemble` 只变换 `PromptPresentation`，`tools` 在瀑布之后才追加，于是 `replaceTools` 非空时该校验的 `Array.isArray(result?.tools)` 对每个作用域都抛出 `assembled tool schemas unavailable`——整轮不可用，而非某个工具不可用。仍提供 schema 的宿主保留更严格的组装面断言（#413）。
+- Add candidate-only benchmark component switches with conservative patch editing, composed-config verification and a bounded readiness turn. Archive effective switches, show them in reports, and reject comparisons across different candidate switch sets (#296).
+- 为 benchmark 增加仅作用于 candidate 的组件开关，保守编辑补丁并核验合成配置及有时限的就绪 turn；归档实际开关、在报告中展示，并拒绝不同 candidate 开关集的混配（#296）。
+
+### Changed — breaking
+
+- The compatibility fallback component and its switch were removed: the four presets,
+  the discovery entry, activity capture and the TUI link are the whole surface. A saved
+  `compat` section is ignored by the resolver instead of failing startup.
+- The bundle now inserts one Loader row named `dsh-ops` (like a single-plugin bundle):
+  its browser half mounts on that row, and the Plugins page configures it from one page.
+  Per the maintainer's decision that page keeps two bundle switches (hide the official
+  tools, dynamic tool discovery) plus four switches per preset (enable the Bash tool,
+  hide the host PowerShell, hide the official tools, dynamic tool discovery). The last
+  two only apply while the matching bundle switch is on; the mode keeps its saved value
+  and the control is disabled. Worker paths, PTC pools, routing text, capture limits and
+  the credential fence stay YAML-only, so the page cannot grow into a second settings app.
+- Saved patch entries for the old row ids (`dsh-ops-mode-*`, `dsh-ops-discovery`,
+  `dsh-ops-compat`, `dsh-ops-panel`, `dsh-ops-tui`, and the older `shell`/`file`/`ptc`/
+  `hide-official`/`background`) are tolerated but no longer authoritative: their modules
+  log one warning and publish nothing. Move those settings into the single row.
+- The optional client carrier (`dsh-ops/lib/profiles/client`) and the
+  `dsh-ops settings-profile` command are removed: the single row mounts the browser half
+  directly, so the migration is unnecessary and no profile is rewritten.
+- 移除了兼容模式组件及其开关：四个预设、动态工具加载、数据采集与 TUI 联动构成全部配置面；已保存的
+  `compat` 段会被忽略而不是导致启动失败。
+- 现在 bundle 只插入一行 `dsh-ops`：浏览器半侧挂在这一行上，插件页用一个页面配置它。按维护者裁定，
+  页面只保留两个总开关（隐藏原版工具、动态工具加载）加上每个预设的四个开关（开启 Bash 工具、
+  隐藏宿主 PowerShell、隐藏原版工具、动态工具加载）；后两个仅在对应总开关开启时生效，模式保留
+  已保存值、控件置灰。worker 路径、PTC 池、路由补充、采集上限与凭据围栏仍为 YAML-only，
+  配置页不会长成第二个设置中心。
+- 旧行 id 的已保存补丁条目仍被容忍但不再生效：对应模块记录一条警告并不发布任何东西，请把设置
+  迁进这一行。可选承载 bundle 与 `dsh-ops settings-profile` 命令一并删除。
+
+### Changed
+
+- The Plugins page configures all seven rows that have keys (four mode rows, discovery, data
+  capture, TUI link) from one schema-driven form: booleans use the host's native Switch, advanced
+  keys fold by default, and only keys that actually changed are written with the revision the page
+  read. A status section on shell rows and the bundle page reports only the host runtime snapshot and
+  owns the install/remove/upgrade actions, which used to live inside the configuration form.
+- 插件页面用同一套 schema 驱动的表单配置全部七个有键的行（四个模式行、发现、数据采集、TUI 联动）：
+  布尔项使用宿主原生 Switch，高级键默认折叠，只写入真正改动的键并沿用页面读到的 revision。
+  shell 行与组合包页面新增状态区，只报告宿主运行时快照；安装/删除/升级动作从配置表单移入该区。
+
+### Fixed
+
+- Resolve Native file paths, Bash workdirs and default result roots through the live DSH
+  working-directory service after `working_directory` changes (#447). Keep workspace write
+  authority and stored reference roots independent; show directory provenance in file/Bash output.
+- The PTC row no longer offers Bash publication and an executor override, which its schema never
+  accepted; the discovery page now exposes the worker override, "fail when the worker is missing"
+  and the credential fence that already existed in its schema.
+- PTC 行的页面不再显示它从未接受的 Bash 发布与执行器路径；发现页面补上了 schema 里已存在的
+  worker 路径覆盖、「worker 缺失即失败」与凭据围栏。
+
+### Fixed
+
+- Prepare Windows result caches without granting workspace access when the host supports cache-only preparation; retain the legacy path on older hosts.
+- 当宿主支持仅准备缓存时，Windows 结果缓存准备不再授予工作区访问权限；旧宿主继续使用原有路径。
+
+- Withdraw PTC publication and cancel calls when a session leaves its selected preset; keep other
+  sessions' discovery selections intact and authorize external calls only in their owned wrapper.
+- Diagnose the selected discovery/shell services and scoped publication; clarify the host's
+  ancestor-registration/restriction limit for nested unrelated preset integrations.
+- 切换离开已接入预设时撤回 PTC 发布并取消调用；保留其他会话的发现选择，外部调用仅在自有包装内授权一次。
+- 诊断所选发现/Shell 的服务与作用域发布，并说明无关预设嵌套时宿主继承祖先注册/限制的边界。
+- Plan only the new Agent on `agent/created` instead of re-reading every live session's tool
+  view, and reconcile the Agents a `tools/change` actually reached; coalesce the passes the host
+  emits unattributed. Creating a session no longer costs O(open sessions) tool-view scans, which
+  was the visible lag when starting one with many sessions open.
+- 新建会话时只规划新 Agent，不再重读所有存活会话的工具视图；`tools/change` 只核对它实际触达的
+  Agent，宿主未标注归属的变更合并为一次处理。新建会话不再随已开会话数线性扫描工具视图。
+
+
+## [0.5.0] — 2026-10-27 — Preset-mode component roster
+
+### Breaking changes
+
+- Replace the seven-row component roster with eight rows: `dsh-ops/mode-minimal`,
+  `dsh-ops/mode-standard`, `dsh-ops/mode-ptc` and `dsh-ops/mode-cordis` for the built-in
+  presets, `dsh-ops/discovery` for dynamic tool loading, `dsh-ops/compat` for Compatibility
+  mode, `dsh-ops/panel` for data inspection and `dsh-ops/tui` for TUI integration. The former
+  `dsh-ops/shell`, `dsh-ops/file`, `dsh-ops/ptc` and `dsh-ops/hide-official` rows are gone
+  from the bundle; their modules remain as unsupported legacy exports for old profiles.
+- A mode row publishes OPS tools only for sessions composed from its preset. Standard and Cordis
+  replace the official `read`, `glob` and `grep`; every enabled mode replaces the official
+  Windows shell (`pwsh`/`pwsh_persistent` with `ops_bash` on Windows). A replaced tool is
+  hidden only while its OPS counterpart is visible in the same scope.
+- `dsh-ops/compat` inverts the removed per-tool `replaceTools` selection: enabling
+  Compatibility mode keeps every official tool visible while OPS tools stay available, and lifts
+  hiding without unloading any row. It is off by default; while it is on, token efficiency and
+  model ability are reduced.
+- Windows sessions route command execution through `ops_bash` instead of the official `pwsh`
+  when a mode row is enabled and the OPS counterpart is visible.
+- Restore the OPS icon on every component row.
+
+### Upgrade
+
+- Delete saved profile patch overrides for `dsh-ops-shell`, `dsh-ops-file`, `dsh-ops-ptc` and
+  `dsh-ops-hide-official`; a leftover override names no row in the new bundle and produces a
+  startup `patch: entry ... not found` warning. Set the mode switches you want afterwards.
+- The optional client carrier migration now only switches the profile bundle name. It preserves
+  every component row, switch and effective configuration; the nested client bundle renames only the
+  standard-mode row to the package root, so a name-qualified `dsh-ops/mode-standard` override is
+  refused for manual review instead of being rewritten.
+
+## [Unreleased]
+
+- Unify Native/discovery/PTC file and result publication with typed Outcome values and separate compact Native rendering; preserve fresh-read evidence, CAS and authority. Result uses one put/page/release schema, rejects Native put before IO, and defaults root to live cwd in both projections. Real source/grant changes conservatively invalidate all old steps sharing that registration; resolve again, never automatically replay.
+- Native/发现/PTC 文件与 result 统一发布，执行值为类型化 Outcome，Native 文本独立紧凑渲染，保留新鲜读取证据、CAS 与权威检查。result 统一 put/page/release schema，Native put 在 IO 前拒绝，两投影 root 均默认实时 cwd；真实来源/grant 变化保守使共享注册旧步全部失效，须重新 resolve，禁止自动重放。
+
+- Embed the complete frozen official Niubash v1.5.0 Windows x64 payload as the default shell backend; verify source and per-call execution trees, include preparation in cancellation/deadlines, preserve results on cleanup failure, and integrate managed install/status/select/removal. Missing payloads never switch implicitly to ambient Bash; explicit Git Bash and POSIX system Bash remain supported. This full-package-first choice does not rule out rubash-only later.
+- Windows x64 默认 Shell 改为固定官方 Niubash v1.5.0 完整载荷；校验源树及每调用执行树，准备阶段纳入取消/超时，清理失败不覆盖结果，并接通托管安装/状态/选择/卸载。缺载荷不隐式切换环境 Bash，保留显式 Git Bash 与 POSIX 系统 Bash。这是先完整包的阶段选择，不否定后续 rubash-only。
+
+- Let `/Prev` and `/XRefStm` be ordinary PDF dictionary keys: they mark an unsupported
+  incremental update only as trailer keys, so an outline item's `/Prev` no longer makes the
+  whole document unreadable (#427).
+- 允许 `/Prev` 与 `/XRefStm` 作为普通 PDF 字典键：仅当它们出现在 trailer 中才表示不支持的增量更新，大纲项里的 `/Prev` 不再使整份文档被判不可读（#427）。
+
+- Add current-scope `ops_status` diagnostics and public `diagnose(ctx, agent)` inspection; report integration, host/runtime, presentation and external provider readiness without executing or activating capabilities (#440).
+- 新增当前作用域 `ops_status` 与公开 `diagnose(ctx, agent)`，区分接入、宿主/运行时、展示及外部提供者状态，不执行或激活能力（#440）。
+- Expose opt-in Native capability providers with original names/contracts, explicit preset allow/startup/disable controls, per-instance selection invalidation and provider-owned authorization; reuse scoped discovery publication without requiring the OPS worker for external-only sessions (#440).
+- 开放 Native 第三方能力注册，保留原名与契约，预设显式允许/启动/禁用，按实例撤销选择并由提供者负责授权；复用作用域发现发布，纯外部会话不依赖 OPS worker（#440）。
+- Add explicit `dsh-ops/integration` preset opt-in with independent files, Bash, Native/PTC, discovery, replacement and guidance choices; unknown presets no longer receive the bundled discovery row implicitly. Existing headless/built-in and explicit legacy components retain their compatibility paths (#440).
+- 新增 `dsh-ops/integration` 显式预设接入，独立控制文件、Bash、Native/PTC、发现、替换和提示词；未知预设不再隐式获得 bundle 的发现行。内置/无预设 headless 与显式 legacy 组件保留兼容路径（#440）。
+- Separate scoped Native publication and replacement lifecycle from built-in preset policy; move Native rendering/read evidence to `file/native` and typed PTC projection to `ptc/projection`, without changing tool contracts or component exports (#440).
+- 将作用域内 Native 发布与替换生命周期从内置预设策略分离；Native 渲染/读取证据归入 `file/native`，类型化 PTC 投影归入 `ptc/projection`，工具契约和组件导出保持不变（#440）。
+- 收敛所有 DSH 产品类型、懒加载 scope 与 profile carrier 入口到项目自有 `adapter/dsh` 边界；保持现有 Cordis 工具注册、提示词、权限、subprocess、PTC、结果与 UI 行为不变，并将宿主兼容声明扩展至 `>=0.2.0-rc.2 <0.2.2-0`，覆盖已验证的 DSH 0.2.1-rc.4。
+- Converge DSH product types, lazy scope loading and profile-carrier entrypoints behind the project-owned `adapter/dsh` boundary without changing existing Cordis tool, prompt, policy, subprocess, PTC, result or UI behavior; widen the bounded host range to `>=0.2.0-rc.2 <0.2.2-0`, including validated DSH 0.2.1-rc.4.
+- Make benchmark model/reasoning selections actual shared routing conditions, archive composed configuration, and record the condition in sealed evidence. Repeated selections produce separate condition groups and reports; cross-condition pairing is refused, while historical runs remain readable as unknown (#294).
+- 将 benchmark 的模型与思考档位选择用于两臂实际路由，归档合成配置并在封存证据中记录条件。重复选项生成独立条件组和分组报告，拒绝跨条件配对；历史运行仍可按未知条件读取（#294）。
+- Make benchmark setup skip Windows-only checks explicitly on POSIX, preserve platform/component configuration in summaries and sealed arms, reject cross-platform comparisons by default, and expand the optional tools smoke to Linux, Windows and macOS (#295).
+- 基准准备在 POSIX 上明确跳过 Windows 专用检查，普通摘要和封存数据保留平台及组件配置，默认拒绝跨平台混配，可选 tools 自检覆盖 Linux、Windows、macOS（#295）。
+- Document the owned Bash restriction boundary and publication switch (#380),
+  provider tool-change error ownership (#367), and scoped discovery troubleshooting (#346).
+- 说明 Bash 自有工具的掩码边界与发布开关、提供商工具变更错误的职责边界及 discovery 作用域排查方法。
+- Add macOS Intel (`darwin-x64`) as a first-class native target on macOS 13+: accept it in the resolver and profile commands, declare it in every component row, ship its Mach-O worker with a receipt, and add a non-blocking `macos-15-intel` CI leg plus the fourth release artifact. The Intel leg measured 318 s, so it follows the >300 s non-blocking rule. macOS 12 is not part of this support: its kernel lacks `CLONE_ACL`, so the write path fails closed; that fallback is a separate follow-up. See [macOS](macos.md).
+- 将 macOS Intel（`darwin-x64`）作为 macOS 13+ 的一等原生目标：解析器与 profile 命令接受它，所有组件行声明它，发布其 Mach-O worker 与收据，并新增非阻塞的 `macos-15-intel` CI leg 与第四个发布 artifact。Intel leg 实测 318 秒，因此按 >300 秒规则作为非阻塞信号。macOS 12 不在本次支持范围内：其内核缺少 `CLONE_ACL`，写路径会 fail closed；该回退是独立后续项。说明见 [macOS](macos.zh.md)。
+- Declare DSH 0.2.0-rc.2 and 0.2.1-rc.2 consistently in engines/peers, export every
+  component icon, and validate bundle composition with the host patch API (#200).
+  中英文兼容范围、组件图标导出与升级检查同步更新；宿主 patch 校验拒绝丢失目标的 override。
+- Derive discovery names, file mutation/rendering classes, retrieval continuations, read observations, PTC residency and browser replacement choices from shared catalogue facts. Check all component declarations and explicit bundle defaults against runtime definitions, cover every worker tool in the Rust dispatch boundary, and expose missing shell/discovery settings fields with explicit compatibility exclusions (#315).
+- 从共享目录定义派生发现工具名、文件变更渲染分类、读取续页、读取观察、PTC 常驻状态及浏览器替换选项。将各组件声明和 bundle 显式默认值与运行时逐项校验，覆盖全部工具的 Rust 分派边界，并补齐 shell/discovery 设置字段、明确兼容字段的排除项（#315）。
+- Add opt-in `exactTotal: false` to grep for bounded prefix queries. Stop after the requested matching rows, report lower bounds without stable continuation, and preserve exact totals by default and for summaries. Keep invalid encoding as an explicit coverage gap instead of inventing a complete total (#384).
+- grep 新增可选 `exactTotal: false`，按所需匹配行数提前停止，返回下界且不提供稳定续页；默认查询和 summary 保留完整扫描。无效编码仍明确标为覆盖缺口，不伪造完整总数（#384）。
+- Summarize large intact JSON spills for successful Native foreground Bash calls, with bounded samples and a full-output path. Preserve canonical/PTC values, stderr, exit status, host spill ownership and fallback rendering; add no command rewriting or runtime dependency (#297).
+- 成功的 Native 前台 Bash 调用可将大型完整 JSON 溢出输出显示为有限样本和完整输出路径；规范/PTC 数据、stderr、退出状态、宿主溢出存储及降级展示保持不变，不重写命令、不增加运行依赖（#297）。
+- Present `ops_bash` through the host's terminal-card contract with multiline commands, cwd, captured output and durable exit/signal facts. Background jobs retain their collection guidance; older UIs retain generic rendering (#32).
+- `ops_bash` 通过宿主 terminal card 契约展示多行命令、工作目录、已捕获输出和持久化退出码/信号；后台任务保留收集指引，旧 UI 保留通用展示（#32）。
+- Isolate PTC and discovery presentation probes by inheritance family so an unanswered host hook cannot block unrelated roots. Cancel obsolete probe waits on supersession, disposal and unload; reject late publication while preserving atomic family overlays and live authority checks (#359).
+- PTC 与 discovery 的呈现探测按继承族隔离，宿主 hook 未返回时不阻塞无关根会话；探测被取代、销毁或卸载时取消旧等待并拒绝迟到发布，同时保留继承族原子叠加层与实时权限检查（#359）。
+- Defer and coalesce Bash lifecycle publication until session event delivery completes, preserve live authority checks for retained callbacks, and cancel queued publication on unload (#386). Accept text-only prompt presentation hooks without weakening complete PTC assembly checks (#387). Add a delayed-discovery first-prompt regression for the readiness fix already integrated in #366 (#375).
+- Bash 生命周期发布延后到会话事件分发结束后并合并通知，保留旧回调的实时权限校验，卸载时取消待发布任务（#386）；兼容纯文本提示词呈现 hook，同时保留完整 PTC 装配检查（#387）。为 #366 已合入的就绪修复增加延迟 discovery 首轮回归（#375）。
+- Reuse discovery presentation decisions with live context/session/policy inputs and explicit prompt, configuration and service invalidation; keep pre-step and execution checks fresh. Avoid empty Native provider notifications (#345, #333).
+- discovery 按实时 context/session/policy 输入复用呈现判定，并在 prompt、配置和服务变化时失效；pre-step 与执行检查保持新鲜。不为空 Native provider 发送通知（#345、#333）。
+- Publish PTC projections by affected inheritance family, merge superseded requests and track hidden Native provider changes. Attribute OPS-owned tool changes locally so independent sessions keep their definitions and cached probes; unknown external changes remain conservative (#333).
+- PTC 投影按受影响继承族发布，合并被取代的请求并跟踪隐藏 Native provider 变化。OPS 工具变化在本地记录作用域，使独立会话保留定义与缓存探测；未知外部变化仍保守处理（#333）。
+- Retain unchanged Bash layers and inherited restrictions; explicitly refresh definitions when shared jobs or executor services change. Add real-host bounded-probe/event and definition-identity regressions (#333).
+- 保留未变化的 Bash 层与继承限制，仅在共享 jobs 或执行器服务变化时显式刷新定义；增加真实宿主探测/事件有界和定义身份回归（#333）。
+
+- Read the tool names the tooling sections render through the scope view instead of the schema projection. `visibleTools` (the `tooling:shell`/`tooling:file` prompt section and the host-shell denial gate) asked `tools.schemas()` and kept only the names, so every prompt assembly paid one deep copy of every visible definition: 34.2 ms for 258 tools at the issue's own surface shape on the published 0.2.1-rc.2 runtime, against 0.043 ms through `tools.view()` — about 800x for the same name list in the same order, verified against `schemas()` for a scoped key and for the global layer. Cost tracks nested schema nodes, not payload bytes: the same host spends 16.5 ms on 811 KB of flat string fields but 34.2 ms on 705 KB carrying eight nested groups per tool, so the fixture is pinned to the issue's measurement (705,008 bytes of `parameters` against the recorded 691,714). The discovery pre-step probe is deliberately left alone: its per-step assembly is the path by which a presentation that flips without the names moving corrects itself, so memoizing it there trades a measured cost for a correctness regression (#369).
+- 工具区段取工具名改用 scope 视图，不再走 schema 投影。`visibleTools`（`tooling:shell`/`tooling:file` 提示词区段与宿主 shell 拒绝门）之前问 `tools.schemas()` 后只保留名字，于是每次提示词装配都要把所有可见定义深拷贝一遍：已发布的 0.2.1-rc.2 运行时上，按 issue 自身的表面形状造 258 工具要 34.2 ms，而走 `tools.view()` 只要 0.043 ms——同一份名字、同一顺序下约 800 倍，并在 scoped key 与全局层两种形态下逐一对照 `schemas()` 验证一致。代价取决于 schema 的嵌套节点数而非 payload 字节：同一宿主上 811 KB 的扁平字符串字段只要 16.5 ms，而 705 KB、每工具八组嵌套对象要 34.2 ms，因此 fixture 按 issue 的度量固定（`parameters` 合计 705,008 字节，issue 记录值 691,714）。discovery pre-step 探针刻意不动：它每步的那次装配正是「呈现已翻转但工具名未变」这类 scope 自我纠正的路径，在那里加备忘等于用实测成本换正确性回归（#369）。
+- Read the per-publish surface from the scope's derived view instead of its wire schemas, and carry the definition identity in the key. `surfaceOf` asked `tools.schemas()` for the names it memoizes, and that projector rebuilds one deep copy of every visible parameter schema per call: on the published 0.2.1-rc.2 tool runtime a single 258-tool read costs 24.58 ms against 0.094 ms for one view read naming the same surface, so the memo key cost more than the prompt assembly it was meant to skip — measured end to end with 1/2/4/8 agents the probe ran 6.5/14.3/32.8/58.2 ms before and 25.9/47.4/94.6/198.4 ms after, i.e. 2.9–4.0x the work it saves. Names now come from `tools.view(scope).visible`, which resolves the same visible map without projecting it; `schemas()` is kept as a fallback for a runtime that does not expose a view. The key pairs each name with a `WeakMap` identity for the definition the view holds, because a names-only key returns a stale hit when a scoped registration shadows a global of the same name — the shadow is what a publish captures, so missing it publishes nothing on the change that owed a republish. Identity costs one lookup against an object already in hand rather than the `tools.get()` pairing that would rebuild the whole view per name and turn the key into O(names²) (#368, #369).
+- 每次发布的工具快照改为读取 scope 的派生视图，不再读取其 wire schema，并让键携带定义身份。`surfaceOf` 之前用 `tools.schemas()` 取名当备忘键，而该投影每次调用都会把所有可见工具的参数 schema 深拷贝一遍：在已发布的 0.2.1-rc.2 工具运行时上，一次 258 工具读取要 24.58 ms，而读取同一份表面的单次视图只要 0.094 ms，于是这个备忘键比它想省掉的那次提示词装配更贵——端到端实测 1/2/4/8 个 agent 时，探针改动前为 6.5/14.3/32.8/58.2 ms，改动后为 25.9/47.4/94.6/198.4 ms，即多做了 2.9–4.0 倍的功。现在工具名取自 `tools.view(scope).visible`，它在不投影的前提下解出同一份可见映射；保留 `schemas()` 作为运行时未暴露视图时的回退。键为每个名字配上该视图所持定义的 `WeakMap` 身份，因为只含名字的键在 scoped 注册遮蔽同名全局定义时会返回陈旧命中——被遮蔽的那份定义才是发布实际捕获的对象，漏掉它就会在该重新发布的变化上什么都不发。身份只需对已持有的对象查一次表，而非改用 `tools.get()` 逐名配对（后者会为每个名字重建整份视图，把键的代价变成 O(名字数²)）（#368、#369）。
+- Keep the per-agent re-probe from retiring live registrations or stranding an unpublished surface. `reconcile` advanced its epoch on every call, so the passes the new `targets` argument turns into no-ops still invalidated every published `execute` guard and every Native shadow, which then answered `POLICY_DENIED` for a scope that was still authoritative; and a probe recorded its surface on the entry before the republish that consumes it ran, so a pass a later reconcile superseded left the next pass reading that surface as already published and returning early forever, which is how a PTC verdict could never take effect. A separate `published` counter now moves only when a pass actually republishes, the guards compare it, and probed surfaces stay pending until that republish commits them. `discovery` compares `published` for the same reason its probe cannot: assembling the prompt reconciles other scopes. A departure's empty target set is also a probe-free pass now, instead of being normalized to "no restriction" and re-probing every survivor, and the per-publish snapshot reads tool names through one shared `surfaceOf` rather than a copy per plugin (#368).
+- 让逐 agent 重探针不再作废仍有效的注册，也不再把未发布的结果留在 entry 上。`reconcile` 每次调用都推进 epoch，于是新增 `targets` 参数变成空转的那些 pass 仍会作废所有已发布的 `execute` 守卫与 Native 影子工具，它们随后对仍然有效的 scope 返回 `POLICY_DENIED`；探针还会在消费它的那次重发布执行之前就把 surface 记到 entry 上，被后一次 reconcile 取代的 pass 由此让下一个 pass 把该 surface 当作已发布而永远提前返回，PTC 判定因此始终无法生效。现在单独的 `published` 计数器只在某个 pass 真正重发布时推进，守卫改为比较它，探针结果保持待提交直到那次重发布写入。`discovery` 同样比较 `published`：它的探针要装配提示词，而装配会 reconcile 其它 scope。离开 agent 时的空目标集合现在是真正的免探测 pass，不再被归一化成“无限制”而对全部幸存者重探；每次发布的工具快照改由共享的 `surfaceOf` 读工具名，不再每个插件各存一份（#368）。
+- Stop re-probing every tracked agent on each PTC publish. `ptc` and `discovery` both assembled the entire prompt once per agent per reconcile, so a new session paid for every session still tracked: on Windows x64 with 38 bundles the same `session/create` took 264 / 308 / 396 / 475 / 590 / 681 / 748 / 947 ms over eight rounds. Each agent now memoizes its presentation verdict against the tool names it publishes and re-probes only when that set changes, `reconcile` accepts the agents a change actually touches, and the per-publish tool snapshot reads names instead of rebuilding a scope view per tool. The same eight rounds now measure 195 / 226 / 270 / 260 / 295 / 329 / 358 / 373 ms (#333, #359).
+- 不再在每次 PTC 发布时重新探测全部已跟踪 agent。`ptc` 与 `discovery` 都在每次 reconcile 里对每个 agent 完整装配一次提示词，因此新建一个会话要付出所有仍在跟踪的会话的代价：Windows x64、38 个 bundle 下，同一个 `session/create` 八轮为 264 / 308 / 396 / 475 / 590 / 681 / 748 / 947 ms。现在每个 agent 按自己发布的工具名缓存呈现判定、只有该集合变化时才重新探测，`reconcile` 接受「本次真正受影响的 agent」，每次发布的工具快照只读工具名而不再为每个工具重建一次 scope 视图。同样八轮实测为 195 / 226 / 270 / 260 / 295 / 329 / 358 / 373 ms（#333、#359）。
+- Run CI on every PR target branch, including stacked feature branches; provide a checked ruleset payload and explicit administrator acceptance steps for required checks (#303). Repository enforcement still requires admin application.
+- CI 覆盖所有 PR 目标分支（包括堆叠功能分支），提供校验过的规则 JSON 与管理员验收步骤（#303）；仓库强制保护仍需管理员实际应用。
+
+- Stop `dsh-ops-hide-official` from blocking a `run_code` (PTC) scope when `replaceTools` is set. That scope presents one program entry, and the selected counterparts are SDK functions rather than owned native providers, so readiness could never be proven and every PTC session failed prompt assembly with `READINESS_BLOCKED` as soon as one tool was selected. Readiness is now judged on the assembled surface: a scope that really kept a selected official tool still fails closed, while a collapsed scope's transport is not gated and the selected official names stay refused there.
+- 修复 `dsh-ops-hide-official` 在设置 `replaceTools` 后阻塞 `run_code`（PTC）作用域的问题。该作用域只呈现一个程序入口，所选替代工具是 SDK 函数而非已拥有的 native provider，就绪状态永远无法成立，只要选择了一项工具，每个 PTC 会话的提示词组装都会以 `READINESS_BLOCKED` 失败。现在改以装配出的表面判定：真正保留了所选官方工具的作用域仍然失败闭合；折叠作用域的 transport 不再被门禁阻塞，所选官方工具在该作用域内仍被拒绝。
+- Name the bytes each published checksum covers (#300): `SHA256SUMS` is authoritative for the released tarballs, and every tarball records its native worker's digest in `runtime/<target>/provenance.json`; the Release body defines neither. The 0.3.1 notes headed that table `Target | SHA-256` and listed the worker digest, while 0.3.2 kept the heading and listed the ZIP digest, so anyone comparing archive against worker saw a false mismatch. The troubleshooting guides now carry the in-package check (`node package/bin/native-runtime.mjs check --root package --platform <target>`), which needs no platform-specific hashing tool, and `docs/PROVENANCE.md` records the historical mismatch. Published Release bodies are left as they were.
+- 说明已发布的摘要到底覆盖哪些字节（#300）：`SHA256SUMS` 是发布 tarball 的权威，每个 tarball 在 `runtime/<target>/provenance.json` 里记录自带 native worker 的摘要，两者都不由 Release 正文定义。0.3.1 的正文把 `Target | SHA-256` 填成 worker 摘要，0.3.2 在同样表头下填成 ZIP 摘要，比对归档与 worker 的人因此看到假的不匹配。排查文档新增包内校验命令（`node package/bin/native-runtime.mjs check --root package --platform <target>`），不依赖平台专有的哈希工具；`docs/PROVENANCE.md` 记录这段历史口径。已发布的 Release 正文保持原样。
+- Make the Windows CI leg non-blocking while keeping it running on every event (#316): split `validate` into blocking `validate-posix` (Linux x64, macOS arm64) and `continue-on-error` `validate-windows`, and keep `ci-required` from depending on any `continue-on-error` job, so the aggregate neither waits for nor fails with the slowest leg. On `main` after #307 the Windows leg takes 527 / 529 s — up from 482 s before #307, because `npm ci` now downloads the 411 MB Windows Bash payload — against 136–139 s (Linux) and 168–182 s (macOS). `scripts/check-workflows.mjs` now enforces "every blocking job in the aggregate, no non-blocking job in it" and that the aggregate's failure loop names exactly the blocking jobs, so a job cannot stay in `needs` but escape judgement; the Windows result is a signal to act on, not a merge gate.
+- 将 CI 的 Windows 腿改为非阻塞、但仍每次触发都运行（#316）：把 `validate` 拆成阻塞的 `validate-posix`（Linux x64、macOS arm64）与 `continue-on-error` 的 `validate-windows`，并让 `ci-required` 不依赖任何 `continue-on-error` job，聚合既不等待也不随最慢的一腿失败。`main` 在 #307 合入后实测 Windows 腿 527 / 529 秒（#307 之前 482 秒，因为 `npm ci` 现在要拉 411 MB 的 Windows Bash 载荷），Linux 136–139 秒、macOS 168–182 秒。`scripts/check-workflows.mjs` 现在强制“每个阻塞 job 都在聚合里、聚合里没有非阻塞 job”，并要求失败判定循环里的 job 集合与阻塞集合完全相等，避免 job 留在 `needs` 却逃过判定；Windows 结果是待处理的信号，不是合并门禁。
+- Bound each `ops_replace` output to the same 32 MiB UTF-8 byte ceiling as file writes. Check expansion with overflow-safe arithmetic for the entire plan before constructing replacement content or publishing any file, including dry runs; an over-limit target returns `OUTPUT_LIMIT` with no file changes (#330).
+- 将 `ops_replace` 的每个文件产出限制为与文件写入相同的 32 MiB UTF-8 字节上限。在构造替换内容或发布任何文件前，使用检查溢出的算术核验整个计划，dry-run 使用相同口径；任一目标超限即返回 `OUTPUT_LIMIT`，不修改任何文件（#330）。
+- Anchor a POSIX-style absolute `workdir` on Windows sessions (#318). bash itself writes `/d/…` for `D:\…` and models follow that spelling, but the `/`-rooted form slipped past the `driveRooted` escape in `sessionWorkdir` and reached the executor unchanged, where Node's `fs` read it against the *host process's* current drive: with no such directory there, a path that exists was reported as `must be an existing directory`; with a decoy directory there, the command ran in the wrong tree with exit 0. The drive-letter form (`/d/x`, `/d`) is now mapped onto `D:\x` and anchored and validated like any other absolute path; a drive-less POSIX absolute (`/`, `/tmp/x`) is refused with the reason and the accepted spellings, so nothing silently falls back to an unrelated drive. Forward-slash UNC (`//server/share`) keeps its passthrough, `\child` and `D:child` keep their #180 anchoring, and POSIX sessions are unchanged.
+- Windows 会话上的 POSIX 风格绝对 `workdir` 现在正确锚定（#318）。bash 自身把 `D:\…` 写作 `/d/…`，模型也沿用这种写法；但 `/` 开头的形态躲过了 `sessionWorkdir` 里为 `\child` 设的 `driveRooted` 分支，原样到达执行器后被 Node 的 `fs` 按**宿主进程当前盘**解读：那里没有目录时，明明存在的路径被报成 `must be an existing directory`；那里恰有同名目录时，命令会在错误的目录里 exit 0 静默执行。现在带盘符的写法（`/d/x`、`/d`）会映射为 `D:\x`，与其它绝对路径走同样的锚定与校验；无盘符的 POSIX 绝对路径（`/`、`/tmp/x`）被显式拒绝并说明原因与可接受写法，不再静默落到无关盘符。正斜杠 UNC（`//server/share`）维持原样透传，`\child` 与 `D:child` 保留 #180 的锚定语义，POSIX 会话行为不变。
+- Preserve caller-installed tool precedence after the required private MSYS `usr/bin`, before optional bundled `ucrt64/bin` and `cmd` programs (#364). Clarify that `script_path` always uses Bash. Supply empty stdin through a closed pipe instead of Windows NUL, retaining EOF semantics while avoiding the reported MSYS fd-0 device initialization condition (#372).
+- 保持用户自行安装工具的优先级：仅必要的私有 MSYS `usr/bin` 在前，可选的 `ucrt64/bin` 和 `cmd` 排在用户 PATH 后（#364）。明确 `script_path` 始终使用 Bash。空 stdin 改用立即关闭的管道，保留 EOF 语义并避免报告中的 MSYS fd-0 设备初始化条件（#372）。
+- Add concise, field-level help to discoverable core file-tool input schemas, including quoted glob-array examples, regex/literal distinctions, search defaults and preview semantics. Keep resident `read_files`, validation constraints and runtime behavior unchanged; improved guidance does not guarantee model-generated JSON correctness (#328).
+- 为按需发现的核心文件工具输入 schema 补充简短字段说明，包括带引号的 glob 数组示例、正则与字面量的区别、搜索默认值和预览语义。常驻 `read_files`、校验约束和运行时行为不变；改善指引不代表保证模型生成的 JSON 一定正确（#328）。
+- Report unsupported update locks as `LOCK_UNSUPPORTED` instead of a misleading `REVISION_CONFLICT`; actual writes on filesystems without the required lock support remain refused (#326).
+- 文件系统不支持所需更新锁时返回 `LOCK_UNSUPPORTED`，不再误报 `REVISION_CONFLICT`；此类文件系统上的实际写入仍然被拒（#326）。
+
+- Restore UNC directory enumeration for `ops_glob`, `ops_grep` and directory-level `ops_replace`: enumerate through the validated display path, verify before and after that it still names the opened directory, and report `PATH_CHANGED` instead of a possibly complete empty result (#326).
+- 恢复 `ops_glob`、`ops_grep` 与目录级 `ops_replace` 的 UNC 目录枚举：通过已校验的 display 路径枚举，并在枚举前后校验它仍指向已打开的目录；目录被替换时返回 `PATH_CHANGED`，避免将替换后的目录误报为完整结果（#326）。
+- Use `ops_bash`'s description as the host job label, and include the same label in background/promoted results and their rendered text (#322). Keep command/script/default fallbacks for internal callers without a description; document migration from the retired OPS background tools to host job controls.
+- `ops_bash` 使用任务说明作为宿主 job 标签，后台及超时转后台的返回值和显示文本同时带上该标签（#322）。内部调用未提供说明时保留命令、脚本路径及默认名称回退，并补充旧 OPS 后台工具迁移到宿主任务控制的说明。
+- Keep `ref://` result references usable on Linux hosts whose sandbox runs workers under bwrap (#337). bwrap gives workspace-write children a private tmpfs over `/tmp`, so the PTC worker behind `ops_result` never saw the session cache that the host keeps below `tmpdir()`: every page returned `REFERENCE_EXPIRED`, and the session purge silently left the cache behind. The worker argv now binds exactly that one private (0700, owner-checked) cache directory back in, for page/put and for the session purge. Landlock, Seatbelt, Windows and read-only bwrap are unchanged.
+- 修复 Linux 宿主沙箱走 bwrap 时 `ref://` 结果引用不可用（#337）：bwrap 给 workspace-write 子进程挂了私有 tmpfs `/tmp`，`ops_result` 背后的 PTC worker 看不到宿主放在 `tmpdir()` 下的会话缓存，于是每次分页都报 `REFERENCE_EXPIRED`，会话清理也悄悄把缓存留在原地。现在 worker 的 argv 只把这一个私有（0700、校验属主）缓存目录重新绑定进去，分页/写入和会话清理都覆盖。Landlock、Seatbelt、Windows 与只读 bwrap 行为不变。
+- Classify Native file and `ops_result` outcomes in the OPS TUI sidebar from bounded, replayable presentation metadata rather than compact model text. Preserve PTC child JSON handling and exclude paths, content and error messages from the metadata; cover the producer and consumer in always-on tests and the real dsh-TUI host loop (#339).
+- OPS TUI 侧栏通过有界、可重放的展示元数据识别 Native 文件工具和 `ops_result` 的业务结果，不再尝试解析面向模型的精简文本。保留 PTC 子调用的 JSON 处理，元数据不含路径、正文和错误消息；补充 CI 必跑的生产/消费回归及真实 dsh-TUI 宿主闭环测试（#339）。
+- Distinguish ordinary nonzero Bash exits (`failure.code: EXIT_CODE`, `retry: after-input-change`) from interrupted or unavailable execution. Keep failed command status and unknown side effects, but let callers inspect output and correct inputs instead of categorically forbidding another command. Timeout, cancellation, signal death and execution refusals retain their existing retry guidance (#331).
+- 将 Bash 正常结束但退出码非零（`failure.code: EXIT_CODE`、`retry: after-input-change`）与执行中断或执行器不可用区分开。保留失败状态和副作用未知，不再一概禁止再次调用，而是指导先检查输出并修改输入；超时、取消、信号终止和执行拒绝的重试语义不变（#331）。
+- Retry a quarantined Bash IPC generation with a bounded backoff (100/200/400/800/1000 ms, about 2.5 s in total) instead of stranding it on the first refusal. On Windows a freshly written generation can stay un-renamable for about 1.5 s — observed up to 1.64 s: the same rename that raises `EPERM` at +2 ms succeeds later, from another process too, so a single attempt turned a recovery the cache would have finished a moment later into "could not be quarantined" and failed the `bash-ipc` suite with it (#352). The budget is deliberately above that worst measured sample; only `EPERM`/`EBUSY`/`EACCES` are retried, and the publish rename uses the same helper.
+- 隔离 Bash IPC generation 时改用 100/200/400/800/1000 ms 有界退避重试（累计约 2.5 秒），不再因第一次拒绝就把缓存搁置。Windows 上新写入的 generation 约 1.5 秒内不可改名——实测最坏到 1.64 秒：同一条 rename 在 +2 ms 报 `EPERM`、稍后成功（换进程同样如此），单次尝试会把本可稍后完成的恢复变成 "could not be quarantined"，`bash-ipc` 套件也随之变红（#352）。预算刻意高于这一最坏样本；只对 `EPERM`/`EBUSY`/`EACCES` 重试，发布用的 rename 走同一助手。
+
+- Relicense the current distribution as MIT. FastCtx was removed in 0.3.2, so the composite `MIT AND Apache-2.0` statement no longer describes the code; earlier releases keep their own notices, and FastCtx's Apache-2.0 text and required attribution remain in `licenses/fastctx/` and `NOTICE` for them.
+- 当前发行版改为 MIT 许可。FastCtx 已在 0.3.2 移除，复合 `MIT AND Apache-2.0` 不再描述现有代码；早期版本保留各自声明，FastCtx 的 Apache-2.0 文本与要求转载的归属仍保留在 `licenses/fastctx/` 与 `NOTICE` 中。
+- Reserve the exact `.dsh-ops` component case-insensitively on absolute public file-tool paths as well as relative batch paths. Reads, writes, edits, copy/move sources and destinations, removals, and explicit search/replace paths return `PATH_RESTRICTED` before content access or publication. Preserve ordinary hidden-search exclusions and trusted batch audit/result/cache lifecycle access (#329).
+- 绝对路径公开文件工具与相对 batch 通道统一将完整组件 `.dsh-ops` 视为保留名，忽略大小写。读取、写入、编辑、复制/移动的源与目标、删除及显式搜索/替换路径均在内容访问或发布前返回 `PATH_RESTRICTED`；保留普通隐藏搜索排除规则，以及可信 batch 审计、结果和缓存生命周期访问（#329）。
+
+- Fix independent restricted Windows Bash roots failing to reopen the current user's MSYS shared section while another root is alive (#363). Preserve the original ACL and the existing verified object-directory, pagefile-only and Low restricted-token boundaries; unrelated sections and filesystem permissions are unchanged.
+- 修复 Windows 受限模式中，一个 Bash 根进程仍在运行时，独立根进程无法重新打开当前用户的 MSYS 共享段的问题（#363）。保留原有 ACL，以及经过验证的对象目录、仅分页文件共享段、Low 受限令牌边界；不改变其它共享段和文件系统权限。
+
+### Fixed
+
+- Withdraw PTC publication and cancel calls when a session leaves its selected preset; keep other
+  sessions' discovery selections intact and authorize external calls only in their owned wrapper.
+- Diagnose the selected discovery/shell services and scoped publication; clarify the host's
+  ancestor-registration/restriction limit for nested unrelated preset integrations.
+- 切换离开已接入预设时撤回 PTC 发布并取消调用；保留其他会话的发现选择，外部调用仅在自有包装内授权一次。
+- 诊断所选发现/Shell 的服务与作用域发布，并说明无关预设嵌套时宿主继承祖先注册/限制的边界。
+
+## [0.5.0] — 2026-10-27 — Preset-mode component roster
+
+### Breaking changes
+
+- Replace the seven-row component roster with eight rows: `dsh-ops/mode-minimal`,
+  `dsh-ops/mode-standard`, `dsh-ops/mode-ptc` and `dsh-ops/mode-cordis` for the built-in
+  presets, `dsh-ops/discovery` for dynamic tool loading, `dsh-ops/compat` for Compatibility
+  mode, `dsh-ops/panel` for data inspection and `dsh-ops/tui` for TUI integration. The former
+  `dsh-ops/shell`, `dsh-ops/file`, `dsh-ops/ptc` and `dsh-ops/hide-official` rows are gone
+  from the bundle; their modules remain as unsupported legacy exports for old profiles.
+- A mode row publishes OPS tools only for sessions composed from its preset. Standard and Cordis
+  replace the official `read`, `glob` and `grep`; every enabled mode replaces the official
+  Windows shell (`pwsh`/`pwsh_persistent` with `ops_bash` on Windows). A replaced tool is
+  hidden only while its OPS counterpart is visible in the same scope.
+- `dsh-ops/compat` inverts the removed per-tool `replaceTools` selection: enabling
+  Compatibility mode keeps every official tool visible while OPS tools stay available, and lifts
+  hiding without unloading any row. It is off by default; while it is on, token efficiency and
+  model ability are reduced.
+- Windows sessions route command execution through `ops_bash` instead of the official `pwsh`
+  when a mode row is enabled and the OPS counterpart is visible.
+- Restore the OPS icon on every component row.
+
+### Upgrade
+
+- Delete saved profile patch overrides for `dsh-ops-shell`, `dsh-ops-file`, `dsh-ops-ptc` and
+  `dsh-ops-hide-official`; a leftover override names no row in the new bundle and produces a
+  startup `patch: entry ... not found` warning. Set the mode switches you want afterwards.
+- The optional client carrier migration now only switches the profile bundle name. It preserves
+  every component row, switch and effective configuration; the nested client bundle renames only the
+  standard-mode row to the package root, so a name-qualified `dsh-ops/mode-standard` override is
+  refused for manual review instead of being rewritten.
+  
 ## [0.4.1] — 2026-10-20 — Update locks stop leaving files behind
 
 - Stop the update lock from leaving `.dsh-ops-update-*.lock` sidecars behind (#319). The writer that takes the lock removes it on release, and only after proving the name still leads to the inode it locked, so a waiter that opened the old inode can never publish under it. A published write, a request refused after the lock and a directory-wide `replace` now leave the directory exactly as they found it; a sidecar left by a killed writer is not a stuck lock — the next write of that name binds to it, publishes under it and removes it.
@@ -15,1282 +578,14 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Restore `ops_bash` background jobs. The tool read the host `jobs` registry at definition time and then required `ctx.get('jobs')` to be identity-equal at call time; a tracked Cordis service returns a fresh traceable proxy on every read, so the comparison could never hold and every `run_in_background` call failed with `EXECUTOR_UNAVAILABLE` while the schema still advertised the parameter, and a foreground timeout killed the command instead of promoting it. Bind the registry once through `ctx.inject(['jobs'], …)`, exactly as the host's own bash tool does, and pass it into the definition; re-register when the service mounts or unloads. Regression tests cover the tracked-service proxy, background admission, and timeout promotion.
 - 恢复 `ops_bash` 的后台任务能力。原实现定义工具时读取一次宿主 `jobs` 注册表，执行时要求 `ctx.get('jobs')` 与它身份相等；Cordis 的被跟踪服务每次读取都返回新的 traceable proxy，比较永远不成立，于是 schema 声明了 `run_in_background` 却必然报 `EXECUTOR_UNAVAILABLE`，前台超时也只会杀进程而不会转后台。改为像宿主自带 bash 一样经 `ctx.inject(['jobs'], …)` 只绑定一次注册表并传入工具定义，服务挂载/卸载时重新注册；补了被跟踪服务代理、后台受理与超时升级的回归测试。
 
+- Restore extended attributes before the replacement's final mode, so a read-only file keeps its `user.*` attributes and macOS stops reporting `com.apple.provenance` unrestored on every `0400` replace. The mode matrix now carries a user attribute, so the order is asserted on every host rather than only where macOS supplies that attribute for free (#324).
+- 恢复扩展属性时改在写入最终模式之前进行，只读文件不再丢失 `user.*` 属性，macOS 的 `0400` 替换也不再报告 `com.apple.provenance` 未恢复；模式矩阵用例改为携带用户属性，使该顺序在所有平台都受断言约束，而不只依赖 macOS 自带的属性（#324）。
 - Stop inventing audit references for new batch validation failures that occur before a job is saved, and for synchronous failures before worker creation. Preserve worker-provided references, existing resume identities and recovery ids for interrupted or ambiguous execution; no additional worker calls are made (#78).
 - 新批次在审计记录创建前发生已确认的校验失败，或工作进程创建前同步失败时，不再返回不存在的审计引用。保留 worker 返回的引用、已有 resume 标识，以及执行中断或状态不明时的恢复标识；不增加 worker 调用（#78）。
+- Document stopped-host upgrades and removal, explicit trusted-registry selection for lockfile policy checks, and the 0.3.x-to-0.4.x migration contracts (#175, #335, #372). Distinguish file locks, missing registry metadata and unconfirmed native crash causes; retain security policies and provide scoped crash-evidence guidance.
+- 补充停止宿主后升级/卸载、锁文件策略检查时显式选择可信 registry，以及 0.3.x 到 0.4.x 的迁移契约（#175、#335、#372）。区分文件占用、registry 元数据缺失与未确认的原生崩溃原因；保留安全策略并提供按应用收集证据的方法。
 - Validate the selected profile CLI before both dry-run and execution (#100): reject missing or unusable launchers and missing Node bin targets, preserve PATH lookup and Windows PATHEXT/batch launchers, and apply Windows command-script path checks during preview. Dry-run never executes the candidate or changes the profile.
 - 在安装/卸载的预演与实际执行前共用 CLI 静态检查（#100）：拒绝缺失或不可用的启动文件及缺失的 Node bin 入口，保留 PATH 查找与 Windows PATHEXT/命令脚本，并在预演时同样检查 Windows 命令脚本路径。预演不启动候选程序、不修改 profile。
 
 - Fix the generated `ops_load_sdk` declaration (the builder still keyed on the pre-rename `sdk` name), cover the rename alias plus the `select:` and SDK request paths with tests, and align the catalogue facts in the current docs (20/18/15, 242 tokens/1101 bytes) with a docs guard (#302).
 - 修复生成的 `ops_load_sdk` 声明（构建脚本仍按改名前的 `sdk` 判定）、为改名别名与 `select:`/SDK 请求路径补测试，并把当前文档的目录事实（20/18/15、242 tokens/1101 bytes）对齐并加守护（#302）。
-- Account for existing append-log and new-session header bytes before admitting queued panel events, with bounded pending data and physical-stop behavior. Recover persisted caps without appending further events or duplicate markers. If opening the log fails, stop that capture without appending or replacing existing output. JSON parse losses now mark capture degraded and usage incomplete while preserving valid records and totals.
-- 面板恢复先计入已有追加日志或新会话头部的字节，再接纳排队事件，保留有界待写数据与实际停止语义；恢复已封顶日志时不再追加事件或重复的封顶标记。日志初始化失败后停止该会话的采集，不再追加或替换已有输出。JSON 解析丢失的记录现在会标记采集降级、用量不完整，同时保留有效记录及其合计。
-- Add `dsh-ops panel [--serve] [dir] [--port <n>]`: serve one capture directory and the shipped viewer on loopback, preselect the newest valid report, offer the other valid reports for switching, refuse malformed reports and paths outside the directory, and document the capture-directory `.gitignore` and drag-and-drop fallback (#257).
-- 新增 `dsh-ops panel [--serve] [dir] [--port <n>]`：在回环地址上服务一个采集目录与随包查看器，默认选中最新有效报告并列出其它有效报告供切换，拒绝格式错误报告与目录外路径，并补充采集目录的 `.gitignore` 与拖拽回退说明（#257）。
-
-- Require one CI run per pull request: the PR template now asks for the URL of the `CI required` aggregate run triggered by the pull request's own `pull_request` event, and the contributing guides document how to confirm it (`gh run list --branch <branch> --event pull_request`, the PR checks tab), the fork path from #150, the `action_required` approval for first-time fork runs, and the admin-only repository setting that makes `CI required` a required check (#303). Documentation and process only; no workflow or runtime behavior changes.
-- 每个 PR 必须有一次 CI 运行：PR 模板改为要求贴出由 PR 自身 `pull_request` 事件触发的 `CI required` 聚合 run URL；贡献指南说明如何确认（`gh run list --branch <branch> --event pull_request`、PR checks 页）、#150 的 fork 路径、首次 fork 运行的 `action_required` 批准，以及把 `CI required` 设为必需检查的 admin 仓库设置（#303）。仅文档与流程变更，不改工作流与运行时行为。
-- Rename 0.4.0 tools for consistent `verb_noun` naming: `read_many`→`read_files`, `table_read`→`read_table`, `doc_read`→`read_docx`, `pdf_read`→`read_pdf`, `sdk`→`load_sdk`, `discover`→`discover_tools`; merge `edit_many` into `edit_file`. Old raw names in user profiles are silently migrated.
-- 将 0.4.0 工具重命名为一致的 `verb_noun` 形式：`read_many`→`read_files`、`table_read`→`read_table`、`doc_read`→`read_docx`、`pdf_read`→`read_pdf`、`sdk`→`load_sdk`、`discover`→`discover_tools`；`edit_many` 合并入 `edit_file`。用户配置中的旧名会静默迁移。
-- Enable the shell row by default on all three supported platforms: Windows runs the pinned Bash payload declared by the main package, Linux/macOS run the distribution's Bash (overridable with `config.bashPath`), and PowerShell stays host-managed.
-- shell 行恢复为三个受支持平台默认开启：Windows 使用主包声明的固定 bash 载荷，Linux/macOS 使用发行版自带 bash（可用 `config.bashPath` 覆盖），PowerShell 仍由宿主管理。
-- Restore the Windows Bash npm optional payload: the main package declares `@dsh-ops/bash-win32-x64@0.2.1` in `optionalDependencies`, so npm install brings the pinned PortableGit (GNU bash 5.3.15); `bash-runtime`/`provision-shells` and the runtime settings pages remain the selection and repair path. POSIX keeps the system Bash and PowerShell stays host-managed.
-- 恢复 Windows bash 的 npm 可选载荷声明：主包在 `optionalDependencies` 中声明 `@dsh-ops/bash-win32-x64@0.2.1`，npm 安装即带固定版本的 PortableGit（GNU bash 5.3.15）；`bash-runtime`/`provision-shells` 与运行时设置页保留为选择与修复路径。POSIX 继续使用系统 bash，PowerShell 仍由宿主管理。
-- Prepare the 0.4.0 candidate version across owned npm/plugin and Rust workspace metadata without dependency changes. Audit paired release, usage, component, SDK, discovery and manual-validation documentation; record the explicitly approved benchmark scope and retain historical failures separately from functional CI. No release/tag is created.
-- 将自有 npm/插件与 Rust workspace 版本统一为 0.4.0 候选，不变更依赖；同步双语发布、使用、组件、SDK、发现和手动验收文档。记录明确批准的基准范围并保留历史失败，不以功能 CI 代替验收，不创建发布或 tag。
-- Apply the confirmed acceptance scopes: BM-01 gates against OPS 0.3.x with official-reader comparisons reported separately; BM-03 gates file/discovery schemas while retaining startup Bash, exact full-inventory readiness and separate full totals. Preserve historical failed evidence.
-- 按已确认的验收范围判定：BM-01 以 OPS 0.3.x 为准，官方读取器比较单列；BM-03 仅约束文件/发现 schema，保留启动 Bash、完整目录就绪校验及单列完整总量。历史失败证据保持不变。
-
-- Compact each fully returned Native range's metadata receipt by removing its repeated notice label; keep exact source text, full revisions, continuation/EOF facts and the aggregate notice.
-- 删除 Native 完整返回范围的逐文件元数据回执中重复的提示标签；保留精确正文、完整版本标识、续读/文件结束事实及汇总提示。
-
-- Fetch baseline Git history in full CI gates, optional benchmark smoke and the release gate so exact 0.3.1 provenance checks work on fresh checkouts.
-- 完整 CI 门禁、可选基准冒烟与发布门禁获取基线 Git 历史，确保全新检出能校验 0.3.1 的精确来源。
-
-- Include each activated document reader in scoped routing guidance; validate real document receipts in the PTC API coverage suite.
-- 在作用域路由中显示已激活的文档读取工具，并用真实文档回执验证 PTC API 覆盖。
-
-- Keep table coverage honest beyond EOF and after metadata changes. Fresh PTC bundle pools follow
-  the implemented catalogue; saved explicit operator pools remain unchanged.
-- 表格超出 EOF 时只统计实际跳过的行，文件变化后不声明页面完整；新 PTC 允许池遵循实现目录，保留已保存的显式选择。
-
-- Complete the strict TypeScript source migration and disable JavaScript compilation. Reject unimported JavaScript source during packaging while preserving published `.js` paths.
-- 完成严格 TypeScript 源码迁移并关闭 JavaScript 编译；打包时拒绝未导入的 JavaScript 源码，保持发布的 `.js` 路径不变。
-
-- Type central configuration validation, deferred profile migrations, and the remaining TUI/background entries strictly; retain their emitted paths, defaults, validation errors and lifecycle behavior.
-- 将中央配置校验、延迟 profile 迁移及剩余 TUI/background 入口迁为严格 TypeScript；保留产物路径、默认值、校验错误及生命周期行为。
-
-### Type the component host entry (#261, 16/16)
-
-- Migrate the root component entry to strict TypeScript using public Cordis and Agent types; preserve configuration validation, scoped registration, shell denial and teardown behavior.
-- 将根组件入口迁移为严格 TypeScript，使用公开 Cordis 与 Agent 类型；保留配置验证、作用域注册、Shell 拒绝与卸载行为。
-
-### Type profile delegation and session temporary directories (#261, 16/16)
-
-- Migrate profile commands and private temporary-directory helpers to strict TypeScript, preserving official CLI delegation and per-session path behavior; narrow malformed manifest data before use.
-- 将配置档委托命令与会话临时目录辅助函数迁移为严格 TypeScript，保留官方 CLI 委托及会话路径行为，并在使用前验证 manifest 数据。
-
-
-### Strict authority types ([16/16])
-
-- Migrate credential fences, trusted path anchors and permission failures to strict TypeScript without changing emitted entrypoints or authority decisions. Preserve worker effect facts during denial normalization and assert typed host modes/unknown-input narrowing.
-- 将凭据围栏、可信路径锚点和权限错误迁移为严格 TypeScript，保持生成入口和权限决策不变；拒绝归一化保留 worker 效果事实，并验证宿主模式及未知输入的类型缩窄。
-
-### Require benchmark readiness and valid controls (#261, 16/16)
-
-- Block startup scoring when any default Native tool is missing, duplicated or unexpected. Require successful allowed-read controls and exact effect-free denial codes, and independently decode Native source text before comparing bytes. Keep all fixtures, defaults and acceptance thresholds unchanged.
-- 默认 Native 工具缺失、重复或多出时阻塞启动评分；要求允许读取对照成功、拒绝代码与无副作用事实正确，并独立解码 Native 正文后再比较字节。不改变夹具、默认值及验收阈值。
-
-### Preserve literal backslashes in Native source lines (#261)
-
-- Share a reversible source-line encoder across compact and general Native output so literal backslash sequences cannot be confused with tabs, control characters or Unicode separators. Canonical data and ordinary ASCII line output remain unchanged.
-- 紧凑与通用 Native 正文共用可逆行编码，区分字面反斜杠序列、制表符、控制字符和 Unicode 分隔符；规范数据和普通 ASCII 行输出不变。
-
-### Add opt-in real-host acceptance evidence (#261, 16/16)
-
-- Run BM-01–05 with a scripted provider, exact 0.3.1 and pinned official comparators, immutable sensitivity fixtures, visible-content assertions, numerical lossless lower bounds and JSON/Markdown reports. Manual cross-platform CI uploads failed and blocked evidence; no paid model calls or default gate changes.
-- 新增真实宿主 BM-01–05 按需基准、独立基线及不可变敏感性夹具；保留准确正文断言、无损字节下界和失败/阻塞证据，不调用付费模型，不改变默认门禁。
-
-### Keep credential denial paths private (#261, BM-05)
-
-- Omit denied paths and matching policy roots from shared preflight refusal messages while retaining rejection codes, effect state and no-retry guidance for Native and PTC.
-- 凭据预检拒绝不再返回被拒路径与匹配规则；保留 Native/PTC 的拒绝代码、无副作用状态及禁止重试指引，权限边界不变。
-
-
-- Check collected subprocess readers explicitly; absent output after execution remains unknown and retains PTC audit identity. 显式检查子进程输出读取器；运行后缺失输出时保留未知副作用及 PTC 审计标识。
-
-- Type the confined Bash and workspace-preparation boundaries; reject malformed IPC proxy receipts before staging a runtime. 严格类型化受限 Bash 与工作区准备边界；代理收据格式错误时，在暂存运行时前明确拒绝。
-
-- Add optional bilingual browser settings pages for replacement selection, discovery pools and explicit Bash/host PowerShell runtime plans. Preserve the default legacy file row; custom pages require a client carrier and unload when it is disabled.
-- 新增可选双语浏览器设置页面，支持逐工具替换、发现池及显式 Bash/宿主 PowerShell 运行时计划。默认保留旧文件行；自定义页面需要客户端承载行，关闭承载行即卸载页面。
-- Add an opt-in offline settings-carrier migration with exact host composition checks, original-file backups, atomic writes and recovery. The normal upgrade retains legacy file-row names and settings.
-- 新增可选离线设置承载行迁移：精确验证宿主配置合成结果，备份原文件，原子写入并支持恢复。常规升级仍保留旧文件行名称与配置。
-
-### Type panel capture and persisted records (#261, 16/16)
-
-- Migrate panel collection to strict TypeScript while preserving queued-stop, issued-I/O waiting and explicit sealing. Count malformed persisted fields and mark incomplete capture without corrupting valid text or usage totals.
-- 将面板采集迁移为严格 TypeScript，保留排队停止、等待已发起 I/O 与显式封存；错误的持久化字段计入 malformed 并标记不完整，不破坏有效正文或用量总计。
-
-- Add discovery as the seventh bundle row; preserve existing named row overrides. Fresh defaults enable shell on every supported platform and leave panel/TUI/replacements off. Enabling a fresh panel row starts capture; explicit legacy capture:false stays inert. Provide builtin validated file/PTC/TUI configuration.
-- bundle 新增第七行 discovery，保留已有带名称行覆盖。首次安装三个平台默认启用 shell，panel/TUI/替换默认关闭；启用新 panel 行即采集，旧配置 capture:false 保持不采集。补充文件/PTC/TUI 内置校验配置。
-
-- Stop panel collection and queued filesystem work when its row or capture switch is disabled; wait for issued I/O without scheduling a final fold. Expose validated capture settings through the host editor.
-- 关闭 panel 行或采集开关时停止采集及排队文件操作，等待已开始的 I/O，但不触发最终归并；宿主编辑器提供严格校验的采集设置。
-
-- Preserve raw shell configuration through settings validation so ordinary startup and profile reload do not interpret normalized defaults as explicit inputs.
-- 设置校验保留原始 shell 配置，避免启动和配置重载将规范化默认值误认为显式输入。
-
-### Connect runtime settings actions to the host gateway (#261)
-
-- Add typed, package-owned gateway descriptors for runtime inventory, Bash selection and explicit install/remove/PowerShell-upgrade previews. Execute only current one-use plans through host subprocess governance; preserve cancellation and partial-effect facts.
-- 通过宿主网关提供运行时清单、Bash 选择和显式安装/删除/PowerShell 升级预览；仅执行有效的一次性计划，并保留取消和部分副作用信息。
-
-### Validate and persist host settings forms (#261)
-
-- Expose shell executor, discovery pool/always-loaded and per-tool replacement fields through detached settings descriptors and existing validators. Accepted changes persist through the host profile writer and reload the row; stale/invalid writes preserve the profile.
-- 为 shell 执行器、发现允许池/常驻项和逐项替换提供宿主设置描述及既有校验；成功保存后重载对应行，版本过期或无效配置不会改写文件。
-
-- Drain release-gate stdout and stderr concurrently so a full diagnostic pipe cannot deadlock verification; retain both streams and failing exit codes.
-- 发布门禁并行读取 stdout 和 stderr，避免诊断管道写满后验证死锁；保留两路完整输出及失败退出码。
-
-- Require exact OPS-owned Native definitions for selected official replacements, including same-schema ownership changes; preserve fail-closed provider requests while discovery completes startup readiness. Move the replacement boundary and config validator to strict TypeScript.
-- 所选官方替代工具必须是 OPS 拥有的确切 Native 定义，schema 相同的所有权变化也会重新校验；发现组件可完成启动就绪检查，普通提供方请求仍严格拒绝未就绪状态。替代边界和配置校验器迁移为严格 TypeScript。
-
-### Select official read/search replacements individually (#261)
-
-- Replace blanket hiding with `replaceTools: []`: explicitly select reviewed `read`, `glob`, or `grep` alternatives. Unselected tools remain visible without warning lists; only selected counterparts are required for scoped readiness.
-- Legacy `strict`, `scope`, and `additionalOfficialTools` remain validated but inert. Document argument/coverage differences and exclude write/edit because their CAS contracts differ. Validated built-in row forms are available; optional browser multi-selects use the explicit client carrier described above.
-- 官方工具改为通过 `replaceTools: []` 逐项选择 `read`、`glob`、`grep` 替代流程；未选工具保持可见且无警告列表，只校验所选替代工具的作用域就绪状态。
-- 旧 `strict`、`scope`、`additionalOfficialTools` 仅校验不生效；文档说明参数与覆盖差异，写入/编辑因 CAS 契约不同而不提供替换。内置行表单已提供严格校验；可选浏览器多选通过上文的显式客户端承载行启用。
-
-### Leave PowerShell with its host (#261)
-
-- Remove the PowerShell npm payload dependency, shell payload release assembly and automatic
-  host executor overlay. Existing host settings, Windows PowerShell 5.1 and legacy copies stay intact.
-- Add a strict TypeScript manager and `upgrade-host-pwsh` CLI with preview by default,
-  explicit WinGet execution, honest exit/cancellation effects and restart/custom-path guidance.
-- 移除 PowerShell 载荷依赖和宿主执行器覆盖；新增默认预览、显式执行的宿主升级命令，
-  保留已有设置及旧副本，并说明取消后的未知副作用、重启与自定义路径要求。
-
-- Return host-compatible Bash argument failures as values with stable retry/effect metadata; interrupted or failed running commands require read-only inspection before replay. Bash 参数失败返回结构化值；运行后的未知副作用禁止自动重试。
-
-- Cancel queued job starters when host admission fails after accepting the run hook; never retry that call in the foreground. 宿主接受任务启动回调后若准入失败，取消排队启动且不转为前台重试。
-
-### Type the shell execution and host boundary (#261)
-
-- Migrate the new shell executor, host contract, approvals, jobs and session integration to strict
-  TypeScript. Validate the published definition against the pinned SDK with type-only imports;
-  retain existing emitted paths. The remaining adapters are also strict TypeScript in the completed source migration.
-- 将 shell 执行器、宿主契约、审批、jobs 和会话集成迁为严格 TypeScript，以仅类型宿主导入校验公开定义；保持发布路径，剩余适配器也已完成严格迁移。
-
-### Make Windows Bash an explicit optional runtime (#261)
-
-- Add Bash status/install/remove and Git/managed selection commands. Removal previews by default,
-  removes only receipt-marked managed versions, and refuses linked managed directories.
-- Remove the automatic Bash npm payload dependency and release payload assembly. Build, CI and
-  release gates explicitly acquire a pinned fixture, or validate an operator-provided offline one.
-- 新增 Bash 状态/安装/删除及 Git/受管理副本选择；删除默认预览，仅移除有收据的非链接目录。移除自动 npm 载荷与发布组装，构建和门禁显式获取固定 fixture 或验证离线提供的副本。
-
-### Reuse host Bash approvals and background jobs (#261)
-
-- Require command descriptions and return host foreground/background/promoted result kinds, with
-  120-second defaults and 600-second caps. Reuse host jobs for background work and foreground
-  timeout promotion, host per-call approvals for wider access, and host subprocess governance.
-- Recheck session authority after approval and confinement; retain absolute executable selection,
-  verified Windows IPC compatibility, honest partial enforcement and fail-closed runtime errors.
-- Keep script_path, graceMs and includeDiagnostics as documented OPS compatibility extensions.
-- 必填命令描述，复用宿主前台/后台/提升结果、jobs、单次审批及 subprocess；默认 120 秒、上限 600 秒。审批与约束后重检权限，保留绝对执行器、IPC 兼容校验、如实部分约束及失败拒绝；script_path、graceMs、includeDiagnostics 为明确的 OPS 兼容扩展。
-
-### Preserve Bash cancellation through pending confinement preparation (#261)
-
-- Bash execution exposes one live handle for observation and settlement. Cancellation settles
-  pending sandbox preparation immediately, and a late provider response cannot start a command.
-  The first timeout or caller cancellation remains the reported stop cause.
-- Bash 使用同一活动句柄观察和收敛；取消立即终止等待中的准备，迟到响应不能启动命令，保留最先发生的超时或取消原因。
-
-### Type optional TUI projections and panel rendering (#261, 16/16)
-
-- Compile bounded activity, attention, diagnostics and injected rendering under strict TypeScript;
-  preserve readonly metadata, separate running/settled facts and packaged viewer paths without UI dependencies.
-- TUI 与面板辅助模块严格类型化，保留只读元数据、运行/完成状态区别与资源路径，不新增 UI 依赖。
-
-### Type Rust toolchain discovery and source builds (#261, 16/16)
-
-- Compile Cargo discovery and explicit locked build helpers under strict TypeScript with checked
-  toolchain inputs, output callbacks and numeric completion codes; retain the shipped CLI paths.
-- Rust 工具链解析与显式锁定构建改为严格类型，检查输入、文本回调及退出码，发布 CLI 路径不变。
-
-### Type the confined PTC worker boundary (#261, 16/16)
-
-- Compile PTC policy, confinement, runner diagnostics and receipts under strict TypeScript; retain
-  per-call authorization and unknown effects with audit identity when worker output is invalid.
-- PTC 桥使用严格权限、限制执行与诊断类型；非法 worker 输出保留未知副作用及审计标识。
-
-### Type the trusted Native worker boundary (#261, 16/16)
-
-- Compile host policy, observations and Native worker invocation under strict TypeScript; reject
-  non-object arguments before spawn and retain unknown effects for malformed process results.
-- Native 桥使用严格宿主类型；非对象参数在启动前拒绝，非法进程结果保留未知副作用且不误记成功读取。
-
-### Type worker resolution and Native runtime ownership (#261, 16/16)
-
-- Compile worker discovery and Native lifecycle as strict TypeScript; preserve runtime .js paths,
-  provenance checks and scoped teardown, and reject calls before runtime initialization.
-- worker 解析与 Native 生命周期改为严格 TypeScript，保留发布路径和权限边界，未初始化调用返回明确失败值。
-
-
-### Expose scoped DOCX paragraphs (#261, 15b/16)
-
-- Add discoverable Native main-body paragraphs and typed PTC outcomes with explicit excluded content,
-  safe prefixes on unsupported content, stable-scan-only continuation and scoped reference recovery.
-- DOCX 的 Native/PTC 按需启用，明确正文范围与排除内容；缺口保留安全前缀且不伪造续取。
-
-### Read bounded PDF text pages with honest coverage (#261, 15d/16)
-
-- Read a documented classic-xref/standard-font PDF subset into page text and individual runs,
-  with explicit exclusions, per-stream/page/aggregate limits and no OCR or layout claims.
-- Preserve preceding complete pages on unsupported content, keep totals/revision conditional
-  on stable full scans, and capture full pages before bounded reference spill.
-- Publish discoverable-only Native PDF text and typed PTC page/run outcomes, retaining source scope,
-  safe failed prefixes, forward stable-scan continuations and reference recovery metadata.
-- 新增受限 PDF 文本页及 run 读取，明确排除内容和累计预算；保留此前完整页，
-  仅完整稳定扫描提供总数/修订，复用只读权限与无损引用，不声称 OCR 或阅读布局。Native/PTC 按代理按需启用，保留正文缺口与类型化页数据。
-
-### Add bounded PDF container foundation (#261, 15c/16)
-
-- Validate a restricted classic-xref PDF grammar, exact object boundaries and bounded
-  values/references before extraction; verify actual Flate output, checksum and terminator.
-- Reuse the reviewed exact compression dependency without new packages. The PDF reader uses
-  this foundation; the container validator alone makes no complete-text claim.
-- 新增有界传统 xref PDF 容器基础，校验对象边界、引用与实际解压；复用已核验压缩依赖，
-  不新增依赖包，PDF 读取器已接入此基础，容器校验本身不声明文本完整。
-
-### Add bounded DOCX main-body worker observations (#261, 15b/16)
-
-- Read strict DOCX main-body paragraphs and table coordinates with explicit excluded-content
-  scope, bounded ZIP/XML processing, honest partial results and lossless reference spill.
-- Pin ZIP/XML dependencies with defaults disabled; preserve their original license notices and
-  exact release-date review. Legacy DOC, unsupported content and external resolution are refused.
-- 新增有界 DOCX 正文段落/表格坐标读取，明确排除内容及部分扫描；固定经日期核验的 ZIP/XML
-  依赖并保留许可，拒绝旧版 DOC 与不支持内容，复用权限、nofollow 和无损引用恢复。
-
-### Add bounded CSV/TSV worker observations (#261, 15a/16)
-
-- Add an ops-documents workspace crate with strict UTF-8/UTF-16 CSV/TSV decoding, positional
-  string cells, physical line ranges, bounded row pages and safe preceding rows on parse failures.
-- Separate complete physical scans from requested pages and reference capture; reuse no-follow,
-  credential, readonly and automatic-spill boundaries without new external dependencies.
-- Expose discoverable-only Native rows and typed PTC cells with full-scan-only continuations; retain
-  safe prefix data beside non-resumable parse/scan gaps and preserve authority and reference metadata.
-- 新增有界 CSV/TSV worker 读取，严格解码、保留原字符串与物理行范围；错误保留此前有效行，
-  并分别报告扫描、分页和引用捕获完整性，不新增外部依赖。通过发现/SDK 按代理在下一步骤启用；解析缺口保留前缀且不伪造续取。
-
-### Compact fully returned Native file ranges (#261, BM-01)
-
-- Use exact numbered multi-file bodies, quoted shared parent paths and one full-revision/continuation receipt per file. Preserve canonical metadata and diagnostic output for clipped, failed or uncertain ranges; update current-context repeat suppression for compact line labels.
-- 多文件范围以紧凑行号、带引号的共享父目录及完整版本/续读提示展示；规范数据不变，截断、失败及不确定覆盖保留诊断信息，当前上下文去重同步支持新行号格式。
-
-### Deduplicate Native reads with current-context evidence (#261, 10/16)
-
-- Replace repeated line bodies only when the exact successful prior read is present in the latest completed ordinary model request and every file is freshly revalidated. Keep revisions, coverage, paging notices and canonical values. Compaction, redaction, authority changes and uncertain evidence restore full output.
-- Native 单文件和多文件重读仅在当前模型请求包含此前准确正文且每个文件重新验证后省略重复行；保留版本、覆盖范围、续页提示和规范数据，压缩、脱敏、权限变化或证据不足时恢复全文。
-
-### Keep Native startup to the bounded multi-file reader (#261, 9/16)
-
-- Publish `ops_read_many` from startup (raw name `read_many`, later renamed `read_files`); make the single-file/hex reader, search, mutations and Native result paging discoverable. Routing describes only published tools, and the trial explicitly loads its advanced operations.
-- Measure compact file/discovery schemas at 242 tokens; the integrated full Windows Bash/jobs provider order is 660 tokens (catalogue order 661). The earlier full-surface 400-token requirement failed; the operator subsequently approved a file/discovery-only budget with startup Bash and full totals retained.
-- Native 启动仅常驻多文件读取器；单文件/hex、搜索、修改与引用分页按需加载。路由仅描述已发布工具；含 Bash 的完整工具面曾超过原400-token门禁；操作者随后批准仅对文件/发现小计设预算，保留 Bash 启动常驻与完整总数。
-
-### Publish progressive tools before the next real provider snapshot (#261, 7–8/16)
-
-- Activate pending Native and PTC selections at the owning session’s committed step end, before the pinned host captures the next provider schema. Drain owned publication during ordinary assembly without replacing host methods; mark internal probes to avoid recursive waits.
-- Verify Native startup, immediately following discovery, same-call SDK isolation and next-request PTC loading through the real AgentLoop with a scripted provider. The exact test-only loop dependency `0.2.0-rc.2` was published 2026-09-29.
-- 修复真实宿主先组装后 pre-step 导致多延迟一轮的问题；会话提交步骤结束后发布，在下一供应商请求前完成本插件队列，保持当前 SDK 快照与作用域隔离。
-
-### Expose canonical PTC outcomes and generated declarations (#261, 7/16)
-
-- Wrap PTC canonical data in discriminated completed/partial/failure outcomes with stable effects
-  and retry guidance. Safe continuations describe read-only retrieval without replaying mutations.
-- Generate and ship type-only `dsh-ops/ptc-sdk` declarations from the same catalogue/output schemas;
-  verify status narrowing, argument shapes and real worker receipts with the pinned host validator.
-- PTC 返回可收窄的规范结果信封；安全续取只描述只读操作，绝不重放修改。构建并发布同源类型声明，
-  保留参数、覆盖范围、副作用和重试约束。
-
-### Load scoped PTC SDKs progressively (#261, 7/16)
-
-- PTC owns typed file, batch and result APIs independently of the Native file row. Start with the reader, result storage/pager and SDK loader; requested advanced APIs publish only at the next agent step.
-- Keep per-agent allowed pools and always-loaded selections, Native/both isolation, owned registration handoff and structured Outcome failures.
-- PTC 独立提供类型化文件、批处理与引用 API；高级 SDK 按代理在下一步骤加载，支持允许池和始终加载配置，并保持 Native 隔离及结构化失败。
-
-### Page stored references from Native file tools (#261, 6d/16)
-
-- Add a Native page/release projection of the shared ops_result capability, independently owned by
-  the file row. PTC retains put and typed data; Native descendants of PTC agents keep page-only schemas.
-- Bind paging to current session cwd (or explicit original root), authority and visible producer.
-  Preserve source/capture facts and tagged JSON chunks; bounded display never advances past omitted rows.
-- 新增文件组件独立提供的 Native 引用分页/释放能力；PTC 保留 put。分别报告页面、原始操作与捕获完整性，
-  保持会话、权限与生产工具可见性检查，显示截断时要求原偏移重试。
-
-### Bound shared calls and expire session references (#261)
-
-- Share two active/eight waiting worker slots across Native/PTC, recheck authority after admission,
-  and cap worker execution at 30 seconds. Bind private result storage to the live host session and
-  current permissions; cancel and settle calls before authority-respecting cache cleanup.
-- Native/PTC 共用有界调用队列与 30 秒上限；引用绑定活动会话与当前权限，会话结束后按权限清理缓存并保留审计数据。
-
-### Read multiple file ranges and apply atomic multi-edits (#261)
-
-- Add read_many with 1-32 independently reported UTF-8 ranges in one worker call, current-session
-  paths, credential preflight, per-file revisions/errors and explicit pending-file/line recovery.
-- Add edit_many as a single-file atomic CAS edit operation with short receipts. Bound escaped
-  read output using actual metadata bytes; an incomplete line retains its offset and hex guidance.
-- 新增多文件范围读取与单文件原子多段编辑；逐文件报告版本、错误及未读范围，保持权限边界与短回执。
-
-### Spill oversized canonical output into bounded session snapshots (#261, 6b/16)
-
-- Preserve a useful head and original operation root, execution facts and mutation effects while
-  storing requested file/search rows as bounded, losslessly reconstructable tagged JSON records.
-- Keep original scan coverage separate from stored-page and capture completeness; quota rollback
-  never leaves partial logical JSON. Cache errors remain separate from business effects.
-- Authorize trusted cache roots independently of business write roots, preserving no-follow,
-  credential and readonly boundaries; reference pages never create nested references.
-- 大结果保留有界开头与原始根目录，并以可无损重建的分块引用缓存请求范围；区分扫描、捕获和
-  分页完整性，缓存失败不覆盖业务副作用，缓存专用授权不扩大业务写入范围。
-
-### Add private session snapshot references (#261, 6a/16)
-
-- Add trusted-envelope `ref://session/tool/uuid` storage with 10 MiB snapshot and 100 MiB session
-  quotas, serialized LRU, physical byte accounting, no-follow objects and separate durable audits.
-- Recheck live authority/producer scope on access; default TTL follows session lifetime. Bounded
-  pages never nest references. Readonly reads leave storage unchanged; guarded purge preserves
-  the lock and audit namespace and reports partial cleanup honestly.
-- Preserve Windows private-temp capability isolation; real confined create/reopen/readonly and
-  foreign-session denial assertions cover the protected cache ACL.
-- 新增可信信封内的会话引用，单结果 10 MiB/会话 100 MiB、序列化 LRU、物理字节计量与独立审计。每次检查活动权限/生产工具，默认会话生命周期，不嵌套引用；只读不改存储，清理保留锁与审计并如实报告部分失败，Windows 私有临时目录 ACL 有真实隔离回归。
-
-### Discover advanced tools in the requesting Native scope (#261, 8/16)
-
-- Add `dsh-ops/discovery` and `ops_discover`: deterministic allowed-pool selection, a 1-5 per-call cap, and always-loaded choices. Publish pending capabilities only at the next model-step boundary, with scope isolation, permission withdrawal and owned cleanup.
-- Coordinate overlapping discovery rows and exact Native ownership with progressive PTC publication. Preserve unrelated external registrations and same-scope file handoff; include current batch reads/edits and the Native reference pager.
-- 协调重叠发现行、Native 精确归属和渐进式 PTC 发布，保留外部注册与同作用域文件交接；纳入现有批量读写及 Native 引用分页器。
-- Add pinned schema token measurement and real Cordis/native-worker lifecycle checks. The current discovery entry alone measures 94 cl100k_base tokens; this is not the full default surface. The real PDF next-request assertion is part of BM-04.
-- 新增按需发现组件与 `ops_discover`：允许池、单次 1-5 项上限和始终加载选择；仅在下一模型步骤挂载，并保证作用域隔离、权限变更撤销及卸载清理。
-- 新增固定分词器的 schema 计量和真实 Cordis/原生 worker 生命周期测试；当前发现入口为 94 cl100k_base tokens，不代表完整默认面；真实 PDF 下一请求断言由 BM-04 验证。
-
-### Render Native file results as bounded, readable text (#261)
-
-- Show file headings and physical line numbers, concise mutation receipts, and explicit
-  completion, paging, metadata, effect and retry notices. PTC execution data stays unchanged.
-- Bound Native content blocks to 64 KiB after escaping, with recovery guidance when the
-  display is clipped. Preserve Unicode pairs, grep context line numbers and glob path results.
-- Reject invalid UTF-8/unsupported text encodings with `ERR_INVALID_ENCODING` and binary-reader
-  guidance; verify identical physical-LF counts and unmodified write bytes across projections.
-- Native 文件结果改为带物理行号的有界文本，保留分页、元数据、副作用与重试提示；PTC 数据不变。
-  转义后最多 64 KiB，截断时明确提示；非法编码返回 `ERR_INVALID_ENCODING`，不进行有损替换。
-
-### Centralize capability metadata and prepare typed kernel contracts (#261)
-
-- Move policy and file/PTC contracts to TypeScript, with one capability catalogue for names,
-  ownership, presentation availability, concurrency and schemas. Existing registrations, tool
-  descriptions and output rendering remain compatible.
-- Add typed Outcome, search coverage and result-reference contracts plus explicit error/retry
-  policies for subsequent adapter slices. Incomplete searches cannot claim a known total.
-- Pin Node 22 declarations and check valid/invalid contracts in the regular test runner.
-- 统一能力名称、归属、呈现、并发及 schema 目录；策略和文件/PTC 契约迁为 TypeScript，加入 Outcome、搜索覆盖、结果引用及错误/重试类型，固定 Node 22 声明并验证正反类型用例。
-
-### Report search coverage and validate continuation state (#261)
-
-- Search reports distinguish scan coverage from page delivery, count skip reasons, and omit full
-  totals after unreadable, encoding, size or execution-budget gaps. Bounded rescan continuations
-  reject changed queries, authority and observed filesystem state; incomplete traversals require
-  a narrower fresh query. Search retains physical LF accounting and bounded output prefixes.
-- 搜索区分扫描与分页，统计跳过原因，遇读取/编码/大小/预算缺口不提供全量总数；重扫续取校验查询、权限与文件状态，不完整遍历要求缩小新查询，保留物理 LF 行号和有界前缀。
-
-### Version the one-shot worker request protocol (#261)
-
-- Send strict v1 requests with per-call IDs, component provenance, and enforced deadline/output
-  budgets while retaining existing host authority checks and canonical success results. Reject
-  malformed envelopes before effects; interrupted or oversized mutation receipts never imply no
-  effects. Keep explicit v0 decoding for benchmark compatibility with bounded transport defaults.
-- 单次 worker 请求采用严格 v1、调用 ID、组件来源及执行/输出预算；副作用前拒绝错误信封，修改执行后中断/超限不假装无副作用，保留有界 v0 解码供基准兼容。
-
-### Split the native kernel into workspace crates (#261)
-
-- Extract protocol, file, search, batch, and result-storage crates while retaining the one-shot
-  worker and existing authority, metadata, no-follow, and audit rules. Test the complete Cargo
-  workspace and include every path dependency in published source packages.
-- Include workspace crates and platform metadata adapters when checking for stale benchmark workers.
-- 拆分协议、文件、搜索、批处理和引用存储 crate，仍按调用启动并保留权限、元数据、nofollow 与审计；完整 Cargo workspace、发布源包及基准陈旧检查均包含路径依赖和平台元数据适配器。
-
-### Build plugin source into the existing JavaScript package layout (#261)
-
-- Move plugin source to `src/` and introduce the TypeScript build with JavaScript migration
-  support. `lib/` becomes generated output; package exports and component entry paths stay the
-  same. Component assets are copied alongside the emitted JavaScript.
-- Build before verification and packaging, and document the build step for direct suite runs
-  and source installations in both contributor guides. Published packages keep shipping `lib/`
-  without `src/`; this toolchain slice does not change tool behaviour.
-- 源码移至 src、构建到既有 lib 路径并复制资源，验证和打包前先构建；发布包保留 lib 不含 src。初期 JavaScript 迁移支持现已在第 16 步移除，全部插件源为严格 TypeScript/TSX。
-
-### Earlier file-tool compatibility repairs retained in 0.4.0
-
-These entries record the earlier eleven-tool baseline; the current catalogue, Native text projection and SDK surface are described above. 以下保留早期十一工具基线修复；当前目录、Native 文本投影与 SDK 以上方 0.4.0 条目为准。
-
-- All eleven file argument schemas render concrete types in the pinned host SDK.
-  Bounds unsupported by that SDK are explicit descriptions backed by native validation;
-  required fields, enums and edit shapes remain. Native glob now enforces its advertised
-  limit and grep rejects unknown output modes. Legacy inspect offset 0 remains supported.
-- Grep counts through the candidate set even after its page fills, while materializing
-  only the requested window. `total`, `matched`, `omitted` and `complete` no longer claim
-  that a prefix is a complete multi-file search. Read failures prevent completion;
-  non-UTF-8/oversized candidates are reported as `skippedFiles`. Each page rescans, so this
-  is a correctness repair, not a scan-speed claim. Existing traversal bounds still apply.
-- Inspect's model view shares a homogeneous page's path once, without mutating the raw
-  execution/PTC result or removing revision, pagination or truncation metadata. Worker
-  byte-budget pagination and long-single-line continuation are unchanged.
-- Routing distinguishes `summary` aggregate totals, `count` per-file counts and `content`
-  matching text; defaults are unchanged. The native guide no longer advertises removed
-  inspect aliases or exception-only handling for file-tool failures.
-
-These changes do not establish net model token savings; no billing/cache A/B is claimed.
-
-### Inspect routing matches the native surface (#68)
-
-The paired component routing tables no longer advertise multiple ranges, arbitrary
-encodings or PDF text for `ops_inspect_local_file`. The historical 0.2.x manual
-checklist now labels those file cases explicitly as historical; current inspection
-is single-path, bounded UTF-8 text or hex. A contract regression checks both tables.
-
-### The 0.3.2 real-machine findings, fixed (#204, #235, #236, #237, #240)
-
-This is the earlier adapter repair history. In 0.4.0 the public Bash adapter returns schema-valid failure values for invalid arguments; its contract above supersedes the legacy thrown-refusal behavior below. 以下是旧适配器修复历史；0.4.0 公开 Bash 对无效参数返回符合 schema 的失败值，上方契约取代下文旧抛错方式。
-
-Four findings from the 0.3.2 Linux x64 session run in #204. Three are behaviour changes, and
-each one is pinned by a suite that would fail without it.
-
-- **`ops_bash` argument errors are refusals again (#235, F1).** A regression in the 0.3.2
-  delivery stack folded *every* thrown error from the session wrapper into a value, so an
-  invalid argument came back as a value that did not satisfy the output schema and the host
-  reported `returned invalid output` — the caller never saw `invalid workdir: …`. Argument
-  validation now raises a typed refusal (`BashArgumentError`, `code:
-  INVALID_BASH_ARGUMENT`) that the wrapper re-throws with the field named, while a runtime
-  failure is still folded into a value — and a folded value now carries the full
-  `BASH_OUTPUT_SCHEMA` shape (`status`/`timedOut`/`timeoutMs`/`stdout`/`stderr`). A
-  suite asserts both halves.
-- **A relative `workdir` is resolved against the session workspace (#237, F3).** It used to
-  be passed through verbatim, so `.` or `sub` was resolved by the helper process's own
-  working directory: commands ran in the wrong directory *without an error*. Relative paths
-  now anchor to `session.header.cwd` (absolute paths unchanged, empty or whitespace still
-  falls back to the session directory, and on Windows a drive-relative path resolves against
-  the session's drive or is refused). A workspace that disappeared is reported as
-  `invalid workdir: must be an existing directory, got <session directory>`; a spawn ENOENT
-  whose `workdir` is gone no longer wears the "missing bash payload" remedy.
-- **`ops_glob` reports a real modification time (#236, F2).** `details.modified` returned the
-  file's *byte count* (`symlink_metadata().len()`), which also made `sort: "modified"` a
-  size sort. It is now milliseconds since the Unix epoch — the same quantity and unit
-  `ops_stat` reports as `modifiedMs`, and `null` when the filesystem cannot report one —
-  and `sort: "modified"` orders newest first, stably, so equal timestamps keep the walk's
-  path order. `bytes`, `sort: "path"` and the pagination envelope are unchanged.
-- **The credential fence is documented by what it does (#240, F6).** The module comment
-  claimed the fence was on *reads only* while the write path, the `copy`/`move` destination
-  and `replace` were refused as well, and the refusal text told a writer not to *read*
-  credentials. The comment, the refusal message and the configuration reference now state
-  the real reach (path-based: reads, writes, and copy/move destinations; a `.env` cannot be
-  created either), and a suite asserts the wording, the refusals and the documented reach
-  together.
-- **The update-lock sidecar is declared behaviour (#240, P5).** Published writes retain a
-  persistent 0-byte `.dsh-ops-update-<sha256(lowercased name)>.lock` beside the target;
-  unlinking it could let concurrent writers lock different inodes for the same name.
-  The lifecycle and residual refusal cases are documented in `docs/native-ptc.md`.
-
-### Refuse single-file requests before creating the update sidecar (#244, #240, #204 P5)
-
-- The credential fence also refuses removal, including under `danger-full-access`;
-  troubleshooting records that `.env` cannot be created through the ops tools.
-- Single-file requests rejected by pure snapshot checks (revision, edit planning, proposed
-  size, destination absence) now fail before taking the lock. Authoritative checks still run
-  under the lock when needed. `write_file`/`edit_file` dry runs skip the lock entirely.
-- A concurrent change or publication failure after locking can still leave a sidecar, and
-  `replace` can leave one per selected candidate even if its match budget is refused.
-  Persistent sidecars are never unlinked automatically; the cooperative lock identity is preserved.
-
-### `strict` official-tool hiding no longer blocks session readiness (#238, #207)
-
-**Behaviour change.** `dsh-ops/hide-official` used to treat *any* presented official
-tool without a registered OPS equivalent as fatal, so enabling the row with
-`strict: true` on a stock desktop profile killed the session at assembly
-(`READINESS_BLOCKED (EXECUTOR_UNAVAILABLE)` naming 48 tools). That condition is gone:
-the component now takes over only the **shell / file / ptc** faces, and `strict` means
-"hide inside those faces only what has a reviewed replacement".
-
-- Official tools outside the three faces (delegation, teams, jobs, sessions, MCP, media,
-  scheduling, goals, terminal, `workflow`, `skill`, `web_search`, `web_fetch`,
-  `ask_user_question`, `read_image`, `present`, …) are **left visible** with one aggregated
-  warning that names every tool and says it is out of scope. An `additionalOfficialTools`
-  entry for an out-of-scope tool is warned about and ignored; it never fails readiness.
-- An **in-scope** official tool without a registered equivalent (today `write`, `edit`,
-  `str_replace_editor`, `run_code`, and the non-retained shell commands) is **left visible**
-  and named in the same warning. `read`/`glob`/`grep` remain hidden because they map to
-  `ops_inspect_local_file`/`ops_glob`/`ops_grep`.
-- The only remaining fail-closed case is an **explicit** `additionalOfficialTools` request
-  for an in-scope tool that has no equivalent: `READINESS_BLOCKED
-  (HIDING_REQUEST_UNSATISFIABLE)` names the tool and both ways out (remove the name, or
-  disable the row). Infrastructure failures (missing host tool API, incomplete OPS file
-  surface, a mask that cannot hide an own-scope registration) still block that scope.
-- `hide-official` remains a **disabled opt-in row**; the default surface is unchanged.
-  Tests feed the exact 48-tool surface reported in #207 to the real host and assert that
-  assembly resolves, all 48 tools stay visible, and the warning names them.
-
-### The `hide-official` takeover scope is explicit, with a `scope` switch (#239)
-
-**New key.** `dsh-ops/hide-official` gains `scope: takeover | extended | off`.
-`takeover` is the default, so every existing row keeps the 0.3.2 behaviour exactly.
-The scope itself is now data: `TAKEOVER_MANIFEST` in `lib/official-tool-hiding.js`
-lists every pinned official tool name (all 63) and both dynamic official prefixes
-as `tool -> face -> OPS equivalent -> reason`, marking the ones this component
-deliberately does **not** take over. `TAKEOVER_SCOPE`, `takeoverFace`,
-`takeoverEquivalent` and `isHideable` are derived from it; tests fail if a row is
-deleted, if an equivalent drifts from the reviewed registry in
-`official-tool-catalog.js`, or if the table in `docs/component-reference.md` /
-`docs/组件参考.md` stops matching the manifest.
-
-- `scope: takeover` (default) — hide only manifest rows inside shell/file/ptc that
-  have a reviewed equivalent; everything else stays visible with the aggregated
-  warning, and an out-of-scope `additionalOfficialTools` entry is warned about and
-  ignored. Unchanged.
-- `scope: extended` — the takeover scope becomes the manifest plus every name in
-  `additionalOfficialTools`. A promoted name is judged by the same in-scope rule,
-  so one with no reviewed equivalent fails closed with the same executable way out
-  instead of being ignored.
-- `scope: off` — the row takes over nothing: no hiding, no warning, no readiness
-  gate. It neutralizes the row without editing `disabled`.
-- The component card text (`locale/en.json`, `locale/zh.json`) no longer claims
-  that incomplete replacements refuse prompt assembly; it now describes the
-  three-face scope and the single fail-closed case.
-- The configuration and component references document the hidden set, the
-  kept-visible set with reasons, and one copy-paste row per `scope` value.
-
-### A repository-only benchmark harness, merged from #103 and #183 (#205, #173)
-
-- `bench/` is one cross-platform harness with two measurement modes and one JSON data
-  contract. It is repository-only: `files` does not carry `bench/`, no release build
-  touches it, no default CI run executes it, and `npm run bench:*` outside a checkout
-  fails with exit 2 instead of a dead path.
-- The model-free tool-level comparison is adopted from #103 (@OldLigant): its
-  `MATCH / MISMATCH / EXPECTED_DIFFERENCE / EXPECTED_REJECTION / UNSTABLE` state machine,
-  strictly created (never overwritten) reports, and the fixed size-boundary fixture corpus.
-- The model-driven token A/B skeleton is adopted from #183 (@Richeir): pass-drop before
-  cost, per-task pairing, the geomean summary and the archive of the raw evidence.
-- #183 is merged into this history: its branch is an ancestor of the merge that landed the
-  consolidated harness, so its commits are part of `main` even though its superseded
-  artifacts (`bench/lib/fixtures.mjs`, `test/bench.test.mjs`, `bench/platform/win-ab.bat`)
-  were replaced by the split fixtures, the per-slice suites and the cross-platform CLI.
-- #103 is merged into this history the same way: its branch is an ancestor of the merge that
-  landed the consolidated harness, so its commits are part of `main` while its superseded
-  artifacts (`bench/measure.mjs`, `bench/files.mjs`, `bench/fixtures.mjs`, `bench/results/*`,
-  `test/file-bench.test.mjs`) were replaced by `bench/tools/**` and the opt-in smoke job.
-- Git-level credit for both: the harness entered `main` as a **rewrite** (each slice
-  re-implemented the source pull requests), so this entry's commit carries
-  `Co-authored-by:` trailers for @OldLigant and @Richeir.
-- This set follows #173's intent: local performance measurement. Timings are printed as
-  human evidence, never adjudicated; a cost direction is read only when the paired,
-  both-sides-passing delta clears the A/A noise floor.
-
-### Platform defaults confirmed by the operator (#170)
-
-- PTC enhancement is enabled by default (`defaultEnabled: true`, no disabled bundle row).
-  This changes the published 0.3.0/0.3.1 opt-in baseline, but does not force PTC presentation:
-  native/hybrid sessions do not acquire batch/result tools or their scoped guidance.
-- Shell stays enabled on Windows, Linux and macOS. Strict official-tool hiding stays opt-in.
-  Existing explicit profile choices are not migrated or overwritten; users can disable the
-  PTC component explicitly. Enabling the component does not raise filesystem permissions.
-- The catalog's POSIX shell-default claim now agrees with the bundle/manifest. No unsupported
-  `defaultEnabledPlatforms` field or platform `!!js` expression is needed.
-- No token saving is claimed. The pinned-host declaration-cost check is recorded in
-  `docs/ptc-cost.md`: PTC-only added 4,671 prompt characters in the isolated Windows sample;
-  native/hybrid added zero. This is not a tokenizer or net-usage measurement. #145/#148
-  comparisons require equal-task usage/latency/retry evidence before claiming savings.
-
-### PTC paging and discoverability (#171, #160)
-
-- Default enablement is decided separately in #170. Enabled PTC-only scopes
-  receive batch/result usage guidance; native/hybrid scopes do not inherit that guidance or tools.
-- Argument schemas use the pinned host's supported JSON Schema subset, retaining numeric limits
-  as descriptions and native validation. Actual host SDK rendering is tested against `unknown`.
-- Result pages expose expiry, sourceTotal and stable ordered-row contentHash before projection or
-  filtering. Hashes are observations, never authority. First/last/beyond-end pages, invalid IDs,
-  ownership, expiry, release and oversized rows have executable assertions, including real run_code.
-- Expired references return `REFERENCE_EXPIRED` with release/reobserve guidance; batch audit pages
-  have `expires: null` and cannot be released. Current authority and PTC presentation are rechecked
-  before execution; changed authority never silently reuses the producing request's permissions.
-
-### Safety and atomicity (#168)
-
-- Darwin nonempty extended ACLs now fail closed with `METADATA_UNSUPPORTED` before staging.
-  APFS cloning alone is not an exact ACL guarantee; deny-delete entries also prevent safe
-  staging rename/unlink. Use a dedicated metadata-aware tool for ACL-bearing files; changing
-  DSH permissions is not a repair. Plain files still require supported metadata-preserving cloning.
-
-- Replacement receipts hash observed bytes, not a second racy read. Cooperating writers retain
-  the persistent path lock across CAS and atomic publication. Later-file failures retain
-  `effectState: applied` when earlier files have changed; receipt output is bounded before writes.
-- Only trusted host anchors are canonicalized; descendant links remain subject to native
-  no-follow validation. Session temp paths never fall back to the shared root.
-- Windows replacement preserves supported owner/group/DACL/basic metadata through the existing
-  metadata crate. Darwin requires metadata-preserving cloning. Unsupported metadata returns
-  `METADATA_UNSUPPORTED` with repair guidance, not permission-selector advice.
-- `CREDENTIAL_DENIED`, `PATH_RESTRICTED`, `AUTHORITY_CHANGED` and `EXECUTION_RESTRICTED` distinguish
-  credential/path fences, changed authority and OS execution restrictions from actual DSH denials.
-- This cut retains four public file tools. The seven additional tools and end-to-end
-  `expectedRevision` acceptance belong to #167; the shared revision primitive is tested here.
-  Locks serialize cooperating OPS writers, not unrelated programs. Cross-compilation is not
-  macOS/Linux runtime acceptance; repeated macOS/APFS concurrency remains an acceptance gate.
-
-- Tools trial: `node scripts/tools-trial.mjs` calls every published tool on a real host and prints a
-  per-tool table; CI runs it in a separate, non-required `tools-trial` job.
-- Documentation now matches the shipped 0.3.1 surface (no behavior change): the component reference
-  describes `ops_inspect_local_file` as the bounded UTF-8/hex reader it implements (not multi-range,
-  extra encodings or PDF), calls `ops_replace` a literal replacement, states that read-only refuses
-  replacement including its dry run, and names the session's private temporary directory as the
-  workspace-write fence; the Chinese reference is kept in sync. `docs/schema-measurement.md` and
-  `docs/schema-current.json` are marked as the historical 0.2.x FastCtx snapshot, and the READMEs
-  mark the DOC/PDF, web-search and crawl4ai-style tools as roadmap items instead of shipped ones.
-
-### The pwsh overlay commits into the live config reference instead of restarting the host row
-
-`mountBundledPwsh()` applied its reversible overlay with `entry.fiber.update(...)` on the official
-`pwsh-sandbox` row, at mount and again at unmount. On an ACTIVE row that call is a full dispose/reload:
-restarting the host's executor swaps the `shell` service provider, every `inject('shell')` consumer is
-rebuilt, and reconstructing `permission-presets` over a loaded session still carrying the durable `auto`
-preset throws — which bricks the permission service and, through the per-call auto-review hook, every
-tool in the instance (#29, #104, #129; deepseek-harness discussion #9882).
-
-`pwshPath` is a volatile config field and the owning executor re-reads it before every command, so the
-overlay now commits the value into that live reference — through the same
-`Symbol.for('cosmokit.volatile.write')` channel the loader's own `updateVolatile()` writes on — and the
-unmount restores the owner's latest declared value the same way. Neither `Entry.update()` nor
-`Fiber.update()` is called, the owner's stored raw config is never touched, and the takeover and its
-revocation both take effect without restarting anything.
-
-The shells and hardening suites now assert the in-place contract, including that the owning row's
-`update()` is never invoked.
-
-### The config-update marker goes to the profile patch, and never to the composed tree
-
-`mountConfigUpdates()` persisted its one-time marker with `entry.parent.tree.write()`, an API that
-writes the **whole composed tree** back into the profile root file. The loader documents that file
-as an empty entry list and resets it on boot, so the baked copy carried other plugins' rows —
-`ui-theme`'s `preference`/`fontSize` above all — which echoed the previous value back into the
-settings scope and made the theme and font size bounce (dark → system → dark); on a desktop profile
-the baked rows made the whole bundle fail to mount on the next start, silently (#91, #108).
-
-The marker now goes through `configEditor.edit()`, so it lands in the active profile's patch layer,
-leaves every other row alone, is validated as a whole candidate before anything reaches disk, and
-preserves comments and `!!js` expressions. `EntryTree.write()` is never called again, and the suite
-installs it as a tripwire that throws if anything reaches for it.
-
-When the editor is unavailable, or refuses the save, the migration simply stays in effect for that
-activation: no tree write, no fallback write, no error in the boot path, and the notice is emitted
-once per process rather than once per activation. Combines #138 (the patch-layer channel) with #136
-(the in-memory-only discipline).
-
-### Breaking: the FastCtx background component is removed
-
-The `dsh-ops/background` component and everything that existed only for it are gone. The file,
-shell and PTC components behave exactly as before.
-
-- **Removed tools**: `ops_run`, `ops_run_background`, `ops_job_output`, `ops_job_list`,
-  `ops_job_kill`. For a long-running process, use the host `pwsh` tool's `run_in_background`, or
-  detach inside an `ops_bash` command (`nohup ... & disown`).
-- **Existing profiles keep loading.** A `dsh-ops/background` row left in a profile loads as a no-op
-  stub: it accepts any config, publishes nothing, and logs one warning that the row can be deleted.
-  The bundle patch no longer inserts the row, and the manifest no longer declares the component,
-  its prompt section, or the `fastctx` tool namespace.
-- **Configuration update 2.** `serverName`, `enableShellTools` and `toolCallTimeoutMs` were read
-  only by FastCtx. They stay accepted and type-checked, so rows written by earlier bundles (every
-  file row carried `enableShellTools: false` and `toolCallTimeoutMs: 300000`) keep validating, but
-  they are no longer resolved, and `configUpdateVersion: 2` removes them from each saved
-  `dsh-ops`, `dsh-ops/shell` and `dsh-ops/file` row once. A row already at version 1 keeps a later
-  manual `allowSystemShellFallback: true`; the bundle patch no longer writes the keys.
-- **CLI**: `resolve`, `status` without `--profile`, `build` and `provision` are removed and exit 2
-  with the command that replaces each. `ladder` now reports the native worker (`worker` in
-  `--json`, resolved by the same `resolveWorker()` the file component uses) instead of a FastCtx
-  runtime, and its `levels` are `{ files, bash, pwsh }`. `uninstall --yes` still removes
-  `<DSH_HOME>/dsh-ops` (including a FastCtx runtime an earlier version provisioned), and
-  `--purge-fastctx` still removes the leftover `~/.fastctx` state.
-- **Public `dsh-ops/policy` exports**: `BACKGROUND_TOOLS` and `SHELL_TOOLS` are removed;
-  `ladderLevels()` returns `{ files, bash, pwsh }`, and `renderToolingPolicy()` no longer takes
-  `enableShellTools`.
-- **Packaging**: `vendor/fastctx/`, `packages/fastctx-win32-x64/`, the optional dependencies
-  `@dsh-ops/fastctx-win32-x64` and `@fastctx/darwin-arm64`, the `build:rust`, `provision` and
-  `status` npm scripts, `scripts/measure-schemas.mjs`, and the FastCtx build in CI and in
-  `scripts/build-platform-packages.mjs` are removed; a release now publishes the two shell payload
-  packages. `lib/paths.js` now holds `PACKAGE_ROOT` and `dshHome()`.
-- **Licensing is unchanged.** The composite `MIT AND Apache-2.0` statement and FastCtx's required
-  attribution are kept verbatim; FastCtx's license text and upstream notice moved from
-  `vendor/fastctx/` to `licenses/fastctx/`.
-
-### Fixed
-
-- The inherited-root workspace-preparation test (#43) matched only the built-in Administrator's
-  SDDL alias `LA`, so it failed for any other account; it now matches the current user's SID, or
-  `LA` when that user is RID 500.
-
-## [0.3.1] — 2026-10-16 — Cross-platform native tools
-
-Exact release targets: **win32-x64, linux-x64, darwin-arm64 (Apple Silicon)**. Intel Mac, Windows ARM64 and Linux ARM64 are not supported. Bash/PowerShell binary payloads remain pinned Windows-only optional dependencies. POSIX uses host Bash; PTC remains opt-in. Final build/test evidence is linked in docs/release-0.3.1.md.
-
-### Integrated macOS and release hardening
-
-- Merge #67 and #81 with their commit histories; include #69 path-alias handling and #107 Windows short-path validation.
-- Keep strict release closure over all three worker targets, receipt/hash/architecture checks and mandatory Windows IPC.
-- Create replacement temporary files privately, clear inherited Linux ACLs when absent on the original, sync after metadata restoration, and serialize cooperating updates with a stable path lock.
-- Enforce credential policy per traversed file and batch source, not only on the initial path.
-
-### Linux x64 adaption
-
-- Build and verify the native worker on `x86_64-unknown-linux-gnu` as a first-class target: `cargo build --release --locked`, `cargo test`, the full `npm run verify` with `DSH_OPS_REQUIRE_RUNTIME=1` (30 suites, no skip counted as a pass) and `npm run verify:release`. `npm run build:ptc` now stages the Linux worker beside the Windows one, each with its own receipt, and the release checks reject a missing or corrupt artifact for any target the package carries.
-- Keep the platform paths separate instead of compromising both: directory `fsync` and metadata reapplication on POSIX, `MoveFileExW` publication on Windows, chosen per `cfg` rather than papered over with one behaviour that would be wrong on both.
-- Derive platform facts when a suite runs instead of from the host it happens to be on: mount and filesystem fixtures are resolved at run time, no tool is parsed for `LC_MESSAGES`-dependent wording, and whole-suite skips are declared per platform (2 on Linux) rather than counted as passes.
-- Close the release gate over the targets a checkout actually staged, so a Linux-only build passes and `DSH_OPS_REQUIRE_ALL_TARGETS=1` states the multi-platform claim; the closure message names the staged platform instead of assuming Windows.
-- Document the Linux route end to end in `docs/linux-build.md` and `docs/linux构建.md`: build, stage, `npm pack`, `dsh plugin add ./dsh-ops-0.3.1.tgz`, and the gate commands with their expected output.
-- Add 11 boundary suites that run on both platforms: grep across lines, replace metadata, output byte budget, update lock, hex offsets, argument and runtime diagnostics, release scope, PTC provenance, and the Linux argument/attribute suites.
-
-### Credential reads are refused, and the write surface is the session's own
-
-Taken from WTStarMark's PR #40, which found that DSH's filesystem layer does not fence credential
-paths: a tool that reads any OS-readable file could hand a model the operator's keys and tokens.
-
-- The file tools now refuse to read a credential location, by default and before the worker is
-  spawned: `~/.ssh`, `~/.aws`, `~/.azure`, `~/.config/gcloud`, `~/.kube`, `.docker/config.json`,
-  `.netrc`, `.git-credentials`, `.npmrc`, `.pypirc` and the DSH credential stores, plus
-  `id_rsa`/`id_ed25519`-style keys, `*credentials.{json,yaml,ini}` and `service-account*.json`
-  wherever they live. The refusal names the fence and the way out; a row can opt out with
-  `denyCredentialReads: false`, and `DSH_OPS_DENY_READ` can only ever *widen* the list (an absolute
-  entry is used as written, a relative one is resolved below the home).
-- A traversal skips those directories by identity, so `ops_glob` cannot name a private key below one
-  and `ops_grep` cannot match inside one — the match text never enters a result. Covered by
-  `test/credential-fence.test.mjs`, which runs the same call with and without the skip.
-- The shared system temp is no longer endorsed as a `replace`/batch write root: the session's own
-  `dsh-ops-session-<id>` directory is, created lazily with mode `0700`. The host sandbox grants the
-  whole of `/tmp` to workspace-write on Linux, so endorsing it here would let one session replace
-  another's temporary files; this fence is deliberately narrower than the kernel's grant.
-- A directory that holds one binary file no longer fails a whole `ops_replace`: the text files around
-  it are still edited, the binary is reported through `skipped` and `skippedPaths`, and the previous
-  behaviour (refusing the entire call with an error that named no file) is gone.
-
-### Review follow-ups (@Haoming9527, #81)
-
-- An inherited `LC_ALL` silently un-pinned the message locale. POSIX resolves `LC_ALL` before
-  `LC_MESSAGES`, so on a host that sets it — a `zh_CN.UTF-8` desktop commonly sets nothing else — the
-  English pin that keeps the host's `denialSignatures` matching never took effect, and a sandbox
-  refusal was reported as a generic command failure (measured here before the fix:
-  `LC_MESSAGES="zh_CN.UTF-8"`). `shellEnvOverrides` now neutralizes the inherited override (an empty
-  value is "unset" to the C library) and carries its **encoding** intent forward as `LC_CTYPE`, which
-  a host that stated its own ctype keeps. `LC_ALL=C` was not an option: it would make commands read
-  UTF-8 input as bytes.
-- The profile CLI fallback was Windows-only in shape: with no package-based CLI to resolve it
-  selected `dsh.cmd` and launched it through `cmd.exe`, so on Linux the call died as
-  `spawnSync cmd.exe ENOENT` even with an executable `dsh` on PATH. The fallback is now
-  platform-aware, and the `cmd.exe` wrapper is only used on Windows.
-- The Windows update lock blocked the worker's own read. Windows `LockFileEx` denies access to a
-  locked range through *any* other handle, including one the same process opens, and the revision
-  check re-read the target after taking the lock — so an ordinary, uncontended `replace` failed
-  there with a lock violation. Linux cannot show this, because `flock` is per open file description.
-  The worker now reads the current bytes through the lock handle, so nothing reopens the target
-  between the check and the publish. `docs/windows-verification.md` carries the W1g case.
-- Debris cleanup deleted files that merely shared a prefix. The sweep matched
-  `.<name>.dsh-ops-` and removed anything that began with it, which took an operator's
-  `.notes.txt.dsh-ops-personal-backup` and, for a target named `foo`, the *live* temporary file of a
-  different target (`foo.dsh-ops-bar`). A leftover must now be the whole shape this writer creates:
-  the tail has to parse as the v4 UUID `atomic_write` generates.
-- A single long line could exhaust the worker's memory. In the content modes the grep path built one
-  text item per match *before* `limit` was consulted, so a 32 KiB line matched by `pattern: "a"`
-  copied that line 32 768 times and the call aborted under a memory cap instead of returning its
-  first item. Matches are counted in one non-allocating pass and materialized in a second pass
-  bounded by the page; `matched`/`total` stay exact, because they report what was counted.
-
-### The shell component on Linux: the host's own bash, under a mandatory sandbox
-
-Taken from WTStarMark's PR #40, which designed the same capability as a separate opt-in
-`dsh-ops-linux` component. It lives in `dsh-ops/shell` here: `dsh-ops/file` already gives Linux the
-four file tools, so a second component publishing the same four would be two names for one surface.
-The capability is taken; the duplicate component is not.
-
-- On POSIX the resolver answers from `config.bashPath`, then `PATH`, then `/bin/bash`,
-  `/usr/bin/bash`, `/usr/local/bin/bash`, and never provisions a plugin-owned shell: a distribution
-  bash is tied to that distribution's libc and architecture, so a second copy would add supply-chain
-  and licensing burden without solving anything. `allowSystemShellFallback` is the Windows gate on
-  reaching past the pinned payload; with no payload on POSIX the host bash *is* the rung, so the flag
-  is not required there. Windows is unchanged — same config, same `disabled`.
-- `dsh-ops provision-shells` refuses on a POSIX host and names `config.bashPath`, instead of failing
-  on an empty pin table: the pinned payload is the Windows one.
-- Confinement is not weakened by the new rung. A confined command reaches the host sandbox first, and
-  an unavailable or unusable confinement result is refused with no command executed; read-only still
-  publishes no command tool.
-- The FastCtx job lane is **not** widened by it: `lib/tools.js` resolves that lane with `posix: false`,
-  because the lane is Windows-only in 0.3.1 (its payload and IPC proxies are), so a host bash cannot
-  make it publish job tools on a platform nothing here has verified.
-- The manifest now states each component's platforms — `dsh-ops-shell` and `dsh-ops-file`: win32 +
-  linux; `dsh-ops-background`: win32 only — and `npm run validate:manifest` fails if a Linux claim
-  rides along (61 checks).
-- Covered by `test/linux-shell.test.mjs` (a real `ops_bash` execution through the host bash, the
-  refusal under unusable confinement, and the two lanes being one decision apart), by a
-  spawn-environment assertion in `test/mount.test.mjs` that fails if the job-lane fence is removed,
-  and by `test/shells.test.mjs`, whose Windows-doctrine cases now name their platform instead of
-  inheriting the host's.
-
-### Native worker boundary fixes
-
-- Preserve file identity across `ops_replace`. The replacement is published as a new inode, so the target's mode, owner, POSIX ACL and user extended attributes are now captured before the write and reapplied before publication. Previously a `0600` file came back world-readable (typically `0664`) and a `0755` script lost its execute bit. A mode or ACL that cannot be reapplied aborts the call with nothing published; on restore, an owner or attribute that cannot be put back is reported in `items[].metadataWarnings`, while `items[].metadata` reports what was kept. Covered by `test/file-metadata.test.mjs`.
-- Make `ops_grep`'s `multiline` match across lines. It previously only changed what `^` and `$` anchored to while still matching one line at a time, so a pattern containing `\n` could never match and the call answered `matched: 0` without an error. `^`/`$` keep their per-line meaning, context lines still apply, and behaviour without the flag is unchanged. Matching the whole file at once also adds one zero-width match after a final newline, so that position is no longer reported as a line of its own: `$` answers once per line, not once per line plus one, and no match lands on a line the file does not have. Covered by `test/grep-multiline.test.mjs`.
-- State what the shared parameter names mean, without changing the behaviour they name: `replace`'s `pattern` is a literal substring while `grep`'s is a regular expression, and `maxReplacements` is a ceiling that refuses the whole operation rather than truncating it. The refusal now names the match count, the ceiling and how to raise it instead of blaming the pattern.
-- Bound every response by encoded bytes as well as by lines, so a single long line can no longer fail a read outright; `bytesTotal` and `truncatedInLine` report where that applies. The hex view of `ops_inspect_local_file` now reads the first row of the file instead of starting at the second.
-- Hold an exclusive lock across the read-check-publish window of `ops_replace`, so concurrent replacements cannot silently lose a write: a peer now receives `REVISION_CONFLICT` rather than reporting a change it did not keep. Covered by `test/replace-concurrency.test.mjs`.
-- Bound the debris a hard kill leaves behind. The next writer of a file reclaims its own `.<name>.dsh-ops-*` leftovers, which a `SIGKILL` cannot clean up at the point they are created, and a directory `fsync` that fails after a successful rename reports `effectState: "applied"` with a `nextAction` that says not to repeat it, rather than `"none"`.
-- Refuse a native worker that exists without its execute bit, naming the path and the mode, instead of failing later as a bare `EACCES` from `spawn`. The resolver's "unavailable" error lists the candidates it tried, a missing or malformed `provenance.json` is named as an incomplete stage, and `node bin/native-runtime.mjs check` on a package missing a declared platform explains both ways forward instead of raising a raw `ENOENT`.
-
-## [Unreleased]
-
-- Drain release-gate stdout and stderr concurrently so a full diagnostic pipe cannot deadlock verification; retain both streams and failing exit codes.
-- 发布门禁并行读取 stdout 和 stderr，避免诊断管道写满后验证死锁；保留两路完整输出及失败退出码。
-
-### Read-only sidebar navigation
-
-- Add focused all/running/anomaly filters and local retained-metadata pages. Preserve unfiltered session totals, continue long diagnostics, clamp pages on resize/live settlement and release key handlers on unmount. No tools, result-page fetches, history reads or persistent preferences are added.
-
-### Aggregate sidebar anomaly alerts
-
-- Add constant-memory, explicitly all-session anomaly badges without opening the panel or changing focus. Count only accepted settlements; acknowledge notifications with focused `a` without changing tool/session facts. Keep observer and badge failures isolated and respect the host-owned panel ID.
-
-### Native sidebar source integration
-
-- Add opt-in real Rust worker → OPS file runtime → DSH AgentLoop/committed Session → admitted TUI coverage, with a scripted model and owned temporary workspace. Keep source-test registration separate from Windows release support and production PTC/confinement acceptance.
-
-### Sidebar result diagnostics
-
-- Distinguish native file/PTC business refusals, errors, previews, partial settlement and unknown effects from transport returns. Parse only bounded native JSON envelopes, retain no result bodies, and leave shell/spilled output unconfirmed. Show omitted details without fetching them and warn against blind retries after unknown effects.
-
-### Optional dsh-TUI sidebar
-
-- Add disabled-by-default `dsh-ops/tui`, with its own admission manifest and no TUI/React runtime dependency. It observes current-session tool events through a bounded store, uses the host UI kit, and releases its panel and listeners on unload. No tool, prompt, command, polling, profile write or focus change is added.
-
-### Read-only activity projection
-
-- Add an internal bounded projection of live OPS native/PTC tool events for optional UI consumers. It stores no tool arguments or result bodies, isolates sessions, and labels normal transport returns neutrally rather than claiming business success. Existing components do not enable observation or change their tools.
-
-### Payload trust
-
-Found while reviewing what runs *before* it is trusted. Independent of the workspace-preparation
-fix; see that entry for the `PSModulePath` scope note.
-
-- Never hand a spawned child the host environment implicitly. Child processes now receive an
-  **allow-list** (`lib/env.js`): paths, identity, scratch space, locale and proxy variables survive;
-  everything else is withheld. The previous shape-based deny-list (`KEY|PASSWORD|SECRET|TOKEN`) let
-  `SSH_AUTH_SOCK` (which authorises the host's SSH keys) and `DATABASE_URL` (usually carrying a
-  password) through. `probeBinary` also defaults to the scrubbed environment — it **executes** a
-  candidate that may have come from `PATH`, so handing it the full environment made the check a
-  credential-delivery mechanism.
-- Judge the cached confined-Bash runtime with one function on both the cached and the cold path, and
-  keep the two anchors that live **outside** the writable cache (the IPC proxies against the
-  in-package receipt) separate from two **in-domain consistency checks** (the patched MSYS runtime
-  and `bash.exe`, both compared against the source payload). Folding all four into the stat
-  comparison lets a tampered `opsipc.dll` through on both paths. A generation that fails
-  verification is **quarantined and rebuilt** rather than refused forever — one bad write used to
-  brick the bash tool until the host restarted — and the quarantine is bounded to two generations.
-- Isolate every teardown callback (`lib/teardown.js`): one throwing disposer no longer strands the
-  rest of a capability withdrawal or a tool unpublish, and `ptc`'s publication gate is released in a
-  `finally` instead of wedging shut.
-- Compare the native-worker candidate path with `path.resolve` + case folding rather than a path
-  **substring**, so `…\RUNTIME\…` can no longer skip receipt verification.
-- Report a `PATH`-sourced FastCtx on the success path; behaviour is unchanged (same-user, not a
-  privilege boundary).
-
-### Workspace preparation
-
-- Prepare a `workspace-write` root whose path is an **8.3 short name** instead of refusing it as a
-  junction or symlink. Windows generates a short name wherever a path component does not fit 8.3, so
-  a host whose temporary directory is one — GitHub's `windows-latest`, or any machine whose user name
-  is longer than eight characters — could not prepare any workspace under it. The check now judges
-  the path it was given, and that path's ancestors, for reparse points, rather than comparing the
-  given path with its resolved form: a short name changes one into the other with no link involved.
-
-### A host outside the matrix skips the worker-driven suites instead of crashing
-
-`lib/ptc/runtime.js` gains `tryResolveWorker()`, the non-throwing form of
-`resolveWorker()`: the support matrix is still checked in one place, and the result is
-either the resolved file or a complete reason clause. `test/permissions.test.mjs` and
-`test/ptc.test.mjs` use it to leave through `skipSuite` (exit 77) when the host cannot
-answer, where the first of them previously threw while the module was still loading and
-the second failed a load-time existence check. `DSH_OPS_REQUIRE_RUNTIME=1` turns either
-absence into a failure rather than a green run, and a supported host with the worker
-built runs every check exactly as before.
-
-### Windows verification follow-ups, and a lock-sidecar assertion
-
-A Windows x64 verification of the 0.3.1 boundary work (2026-10-16) closed most of its own
-findings in the release itself — the update lock no longer touches the target, credential
-directory names are matched case-insensitively on every host, and `sync_directory` is
-`#[cfg(unix)]`. What is still wrong here is the checklist, not the code:
-
-- **`docs/windows-verification.md` carried expectations the report disproved.** The manifest
-  count is 59, not 58 (the tree that removed the FastCtx and background components dropped two
-  checks); the PE path needs its `.exe`; the L2 hex text is space-separated; a Windows host
-  skips three suites rather than two (`linux-shell` joins the two POSIX-only ones) and reports
-  24 passed + 3 skipped out of 27, not 27 + 3 out of 30; W1e's measured code is `IO_ERROR`
-  (os error 32), not `ACCESS_DENIED`, so the expectation is the structured *shape* rather than
-  one code; and the update-lock note now describes the sidecar, which is what the code takes.
-  The note that a DSH sandbox cannot answer the checklist at all — `workspace-write` cannot
-  spawn the worker, `danger-full-access` cannot let it create its replacement — and the Windows
-  build prerequisites are recorded with it.
-- **The lock sidecar is asserted invisible.** `test/linux-args.test.mjs` plants a
-  `.dsh-ops-update-<hex>.lock` and checks that `glob`, `grep` and a directory-wide `replace`
-  never select or edit it — on every host, because the rule that keeps it out is
-  platform-independent.
-- **No product half remains.** The report's other finding was that a `.cmd` candidate was probed
-  with `CreateProcess`, which refuses a launcher script with `EINVAL`. That probe (`probeBinary`
-  in `lib/binary.js`) is gone with the background component, and the surviving `.cmd` launch
-  path, `lib/profile-install.js`, already goes through `%ComSpec%` with `/d /s /c` and
-  `windowsVerbatimArguments`. So this is a documentation change plus one test.
-
-### The ladder's POSIX worker stand-in has to be executable
-
-`test/bin.test.mjs` seeded its worker stand-in with a plain 0644 text file, on the stated grounds
-that "an explicit worker path is not provenance-checked". That holds for provenance but not for
-the execute bit: `resolveWorker` refuses a non-executable explicit `binaryPath` by mode on POSIX
-(report L12, unchanged by the refactor), and the ladder report now goes through it. The stand-in
-therefore resolved to `{resolved: false}`, which failed two expectations — `worker.resolved` and,
-through `ladderFor`'s publish rule, `levels.files`. Windows passed only because that check is
-`platform !== 'win32'`, so the gate was red on Linux and macOS alone.
-
-The two cases that assert the worker rung now seed an executable stand-in, and the report's
-refusal path gained the coverage the mistake had been hiding: on POSIX, a `binaryPath` naming a
-non-executable file must come back `resolved: false` with the resolver's own "is not executable
-(mode 0644)" reason and no file tools published.
-
-### The gate script, after review: Windows can be green, and a missing tool exits 2
-
-`scripts/verify-gate.mjs` set `DSH_OPS_REQUIRE_RUNTIME=1` on every host. `test/run.mjs` turns any
-skip into a failure under that variable, and Windows has three suites that skip by platform
-(`file-metadata`, `linux-attributes`, `linux-shell`), so the script could never be green there —
-its own allowed-skip table was unreachable. It is now set on the POSIX hosts only, and Windows
-keeps its protection through the skip set: anything skipped outside that list fails. The script
-also asserts the suite total it expects per platform (27), because a suite that stopped being
-collected is not a pass, and a tool that is not installed now exits `2` ("this host cannot answer
-the gate") instead of waiting on a `close` event that a failed `spawn` never emits.
-
-The documentation caught the same drift it exists to prevent: `docs/verify-locally.md` promised
-`61` manifest checks in two places, and `docs/windows-verification.md` still described the ladder
-as failing rather than skipping where no worker resolves, and credited the Windows numbers to a
-sandbox that cannot run the gate at all.
-
-## [0.3.0] — 2026-10-14 — Windows x64 native tools and PTC
-
-Release scope: **Windows x64 only**, targeting DSH 0.2.0-rc.2. macOS arm64 is
-added after this release (see [Unreleased]); Linux/ARM64 are not shipped or
-claimed. The package includes the native Rust worker, Windows Bash IPC proxies,
-receipts and matching source; payload dependencies remain 0.2.1.
-
-### Permission alignment
-
-- Follow the latest authoritative three-mode session policy for fixed file operations; allow OS-readable external paths, reject read-only replacement, fence workspace writes to DSH writable roots in the host and native worker.
-- Execute fixed trusted file operations using the same policy-fence threat model as DSH fs-sandbox, with no-follow native paths and subprocess governance. Arbitrary Bash/PTC code retains OS confinement; no fail-open fallback.
-- Prepare owned Windows workspace roots before outer run_code/pwsh launch using directory-only current-user WRITE_OWNER, with DACL backups and no recursive grants, owner changes or denial removal.
-- Publish Bash in confined modes and resolve policy at each execution. Report authorization denials with required/current mode and explicit user-action guidance, separately from executor initialization failures.
-- Add real Modify-only workspace/provider coverage for native replace, batch copy/move/remove, readonly pages, mode changes and Node worker startup.
-- Fix restricted Windows x64 Bash initialization with verified installation-relative IPC proxy binaries and a private MSYS copy. Preserve original payloads, DSH token SIDs and filesystem confinement; adapt only new private pipes and pagefile-backed process trackers. Matching DLL hashes are mandatory; no unconfined fallback.
-- Add real pure-PTC Node runtime/SDK tests for Bash command, script_path, pipelines, workspace writes, outside denial and downgrade to read-only. Desktop GUI acceptance remains pending restart.
-
-### Missing Bash payload diagnostics
-
-Issue #20 reported that a profile installed from a registry which does not carry the platform payload package is told only to "repair the profile installation" — advice that cannot repair a package the registry never had. #16 asked for the same case to reach the README. Both are addressed below; no release is cut here.
-
-- Give a platform-package miss a machine-readable cause (`no-manifest` / `not-declared` / `not-installed` / `incomplete-tree`) and render the remedy from that cause instead of matching on the detail text, so a wording change cannot silently route the answer to the wrong branch.
-- A missing payload now names the registry as the likely reason and points at `dsh-ops provision-shells --bash` — which bypasses the registry, fetches the pinned upstream release, verifies its sha256 and writes a receipt — rather than the `repair the profile installation` wording. (#20)
-- A corrupt payload tree keeps its repair wording and offers the same command as the alternative, so the two shapes stay distinguishable and each names an action that fits it.
-- Split the spawn-time `ENOENT` result by `source` (`bundled` / `provisioned` / `config` / `path`), each naming the action that actually applies, instead of one sentence for all of them.
-- Document the mirror case in all three READMEs: the measured mirror readings and date, the conditional wording, the cmd and PowerShell proxy forms, the profile-side `ladder` check, and the explicit rejection of `allowSystemShellFallback: true` as a workaround. (#20, Refs #16)
-
-These fixes are included in 0.3.0; the three Windows payload dependencies are unchanged.
-
-### Native file reconstruction and PTC enhancement
-
-- Replace the file component's FastCtx `inspect_local_file`, `grep`, `glob` and `replace` surface with an independent Rust worker and one canonical `path` contract.
-- Add DSH-native policy/sandbox/subprocess mediation for file calls, fail-closed executor checks, session-cwd resolution, cancellation and structured canonical results.
-- Add bounded UTF-8 inspect/hex, glob traversal, Rust-regex grep, and CAS-protected dry-run/atomic replacement with no-follow and special-object rejection.
-- Keep FastCtx only behind the disabled background component; remove file-component runtime discovery, MCP handshake and file-tool fallback.
-- Update manifest, prompt guidance, provenance and composition tests to prove the native namespace is separate from the optional FastCtx background namespace.
-- Retain the opt-in `dsh-ops/ptc` batch/result capabilities and their existing runtime gates.
-
-
-- Add opt-in `dsh-ops/ptc`: two structured capabilities, `ops_batch` and `ops_result`, with no FastCtx or shell dependency.
-- Share independent safe Rust core for preflighted copy/move/remove, content verification, protected/no-follow paths, write-ahead per-item manifests and conservative resume.
-- Add scoped expiring result references, byte/quantity-bounded pages, field/equality projection and operation-reference consumption without widening authority.
-- Follow original DSH enforcement levels (including Windows partial ACL confinement), enable no-write read-only reference pages, and allow explicit external roots under danger-full-access without confinement.
-- Stage checksum-verified Windows x64 worker and Bash IPC proxy binaries; release checks reject missing artifacts. No install-time downloads/compilation; owned-workspace WRITE_OWNER preparation is runtime-only, backed up and non-recursive.
-- Extend the existing PTC simulation suite with original DSH sandbox/subprocess provider acceptance: workspace copy, read-only page, outside-write denial and full-access outside-root operation.
-- Execute through DSH policy + native process confinement + subprocess cancellation; standard/native and hybrid/both scopes receive no PTC-only definitions.
-- Keep business code separate from one three-scenario simulation suite using the real Rust worker and real Cordis/tools/prompt registration.
-- Target native Windows/macOS/Linux; Windows runtime acceptance and Linux/macOS compile checks are recorded separately from pending on-platform sandbox tests. Legacy payloads remain unchanged.
-- Keep each component icon inside its exported manifest directory; fix the PTC Plugin Manager metadata error caused by the parent-relative icon path, with coverage in the existing manifest suite.
-- Source builds use `npm run build:ptc` and `npm run build:bash-ipc`; published 0.3.0 artifacts are Windows x64 only. macOS arm64 support is added after this release (see [Unreleased]). See `docs/native-ptc.md`.
-
-## [Unreleased] — Bash workdir spawn diagnostics
-
-- Validate `ops_bash` `workdir` as an existing directory before spawning, so a missing, file-valued or inaccessible working directory is reported as an explicit `invalid workdir` error (naming the stat error code when access, not existence, failed) instead of the bash-payload ENOENT remedy; a directory deleted between the check and the spawn still falls back to that remedy. The two ENOENT causes cannot be told apart after the fact: Node puts no `cwd` on the spawn error, and the host's Windows runner maps missing program and missing directory onto one code. The session layer now resolves empty or whitespace `workdir` placeholders to the session directory like an omitted value, instead of letting them fail the spawn. Covered by `test/shells.test.mjs`. (#33)
-## [Unreleased] — Workspace preparation
-
-- Write the workspace root's DACL through its own handle (`SetKernelObjectSecurity`) instead of path-based `SetAccessControl`. The added ACE is directory-only, so no descendant needs a new ACL, but the path-based write made Windows walk and re-propagate the whole subtree, and the cost grew with workspace size. Measured on 50,000 files: 18.65 s → 4.30 s cold, versus 3.86 s for 10 files; the warm `ready` path is unchanged. The root DACL is byte-identical to before (control flags including `AI`, existing ACEs, the added `WRITE_OWNER` ACE), and descendant ACLs are untouched. Guards, backup receipt, verification and rollback are kept; rollback uses the same handle-based write. (#43)
-- Raise the preparation timeout from 10 s to a 120 s safety net, and never end the error at the colon: a timeout names the limit, the workspace, that the ACL state is unknown and where the receipt is; a non-zero exit names the exit code, elapsed time and the script's stderr (or stdout, or `(no output)`).
-- Restore `test/permissions.test.mjs`: a merge resolution had dropped the two closing lines of the root-only preparation test, so the suite failed to parse and none of these tests ran. Add the expensive real-world shape as a regression test: a workspace root that inherits its ACL (`D:AI`, no explicit ACEs) keeps its auto-inherited flag and inherited ACEs, gains one directory-only `WRITE_OWNER` ACE, and leaves descendants untouched.
-- Start Windows PowerShell 5.1 with `-ExecutionPolicy Bypass` for the package's own `prepare-workspace.ps1`. Without it, the Windows client default (`Restricted`) refused the script, so every `run_code` / `pwsh` / `bash` / `pwsh_persistent` / `bash_persistent` call in a workspace-write session failed. The flag applies to that one child process; Group Policy still takes precedence. Covered by running the real script under a process-scope `Restricted` policy. (#66)
-- Name the cause of a failed preparation instead of the blanket "(not a user permission denial)": an execution-policy refusal (now only possible through Group Policy, with that remedy), a workspace folder that does not meet the `WRITE_OWNER` prerequisite (with the script's reason), an executor that could not start or timed out, or otherwise the exit code with the script's output. Document that preparation runs as the current user before sandbox confinement.
-
-## [Unreleased] — bashPath restricted-mode diagnostics
-
-- Document that `bashPath` (and any system bash) works only in `danger-full-access`: read-only and workspace-write run only the pinned MSYS whose IPC compatibility proxies were verified. The policy itself is unchanged and still fails closed. (#42)
-- Replace the restricted-mode `This MSYS version has no verified DSH IPC compatibility build. Rebuild the matching proxies` error with one that names the executable and where it came from, says the refusal is by design and not an authorization denial, and gives real next steps: remove `bashPath` to use the bundled or provisioned pinned bash, or ask the user to switch to `danger-full-access`. The signal-pipe runner-failure message gains the same next step.
-- `ops_bash` now says plainly that it has no per-call `sandbox_permissions` escalation when a model passes `sandbox_permissions` / `justification`.
-- `dsh-ops ladder` reports `restricted: { compatible, reason }` for the resolved bash, read-only and without copying anything, and drops the stale "bash requires a full-access session" line.
-## [Unreleased] — File tool placeholder arguments
-
-- The native file tools (`ops_inspect_local_file`, `ops_grep`, `ops_glob`, `ops_replace`) now drop `null` values and empty `""`/`[]` placeholders for *optional* fields at the plugin's own execute entry before the worker runs, so strict tool-call adapters that fill every schema field no longer trip `path`/`encoding`/`view` validation; required fields, `replacement: ""`, `false` and `0` are forwarded unchanged and real conflicts still error; the caller's argument object is not mutated. (#19)
-
-## [Unreleased] — Background job argument strictness
-
-- Check the background tools' arguments (`ops_run_background`, `ops_job_output`, `ops_job_list`, `ops_job_kill`) against FastCtx's own published schema before the owned-job check, so a mistyped or missing `job_id` is reported as `invalid arguments: unknown key "id"` or `missing required field "job_id"` instead of "This job was not started by this session on the current connection." The ownership check itself is unchanged and still decides every call whose arguments are well formed; no argument error reaches the server. Covered by `test/jobs-args.test.mjs`. (#14)
-
-## [Unreleased] — Optional bash input placeholders
-
-- Treat empty/whitespace/null command and script_path values as absent, so adapters that fill optional inputs do not block a valid command or script. Keep rejecting two non-empty inputs and unknown argument keys before spawn.
-- Explain empty placeholders in the parameter descriptions and error recovery; `/dev/null` is not an empty placeholder.
-## 0.2.9 — Bug fixes
-
-Bug-fix-only release for issues reported against 0.2.8 and the 0.2.6/DSH 0.2.0-rc.2 combination:
-
-- Skip the Windows `%SystemRoot%\\System32\\bash.exe` WSL distribution launcher during system PATH fallback, so an explicitly enabled fallback selects a real Git for Windows/MSYS bash instead of silently moving commands into WSL. (#12)
-- Enforce `ops_bash`'s closed argument schema at runtime and reject undeclared keys such as `run_in_background` before spawning. (#10)
-- Persist the one-time legacy shell-fallback migration without calling `Entry.update()` or remounting the plugin. This avoids competing with Desktop profile reloads when configuration is edited, while preserving the safe runtime value and the raw loader row. (B站评论区报告)
-
-No new tools, components, configuration keys, or runtime capabilities are included. The three Windows payload dependencies remain pinned to `0.2.1`.
-
-## [Unreleased] — Tool descriptions and result contract
-
-- Rewrite the native file-tool descriptions to match what the worker enforces: `ops_glob.pattern` and the `glob` filters of `ops_grep`/`ops_replace` are arrays of globs matched against relative paths (`*.md` is top level only, `**/*.md` any depth, `!` excludes; a positive entry is required for `ops_glob` only), `ops_grep` has no `include` field, and `ops_replace.pattern` is literal text, not a regex. (#44)
-- State the result contract precisely, in the descriptions and the prompt section, only for published tools: file tools, `ops_batch` and `ops_result` resolve failures as `status: "error"|"rejected"` values and never throw; `ops_bash` resolves command failures as values and throws only for invalid arguments or an unavailable executor. Drop the stale PTC note about catching errors from "legacy ops_* tools".
-- Add `status: "completed"|"failed"` to `ops_bash` results (additive; `completed` only for a clean zero exit with no error, permission refusal, signal or timeout).
-- Pin the `ops_grep`/`ops_glob`/`ops_replace` parameter keys against their descriptions, and prove the documented behaviour against the real worker.
-
-## [0.2.6] — Owned MCP client lifecycle
-
-- Track only plugin-owned MCP clients and terminate their exact serve processes on explicit Node process exit; never enumerate or kill shared runtime-host processes.
-- Force the existing FastCtx identity-aware parent watcher on for spawned serve clients, even if FASTCTX_NO_PARENT_WATCH=1 was inherited. Forced-owner termination and stdin EOF are covered against the published binary.
-- Make close immediate for pending requests and idempotent for concurrent callers; wait for the same shutdown and bound force-kill escalation. Close a live child whose reply stream reaches EOF.
-- Preserve shared-runtime leases until the final component releases them. Retain all 0.2.5 fixes and the one-time config migration; no Rust/runtime payload changes or context-compaction beta.
-
-## [0.2.5] — Stable safety and verification hotfix
-
-- Default `allowSystemShellFallback` to false in code and the shipped shell row. Ambient PATH/well-known bash discovery requires explicit opt-in; configured and plugin-owned shells still work.
-- Run a one-time startup config self-check per owning row: disable legacy explicit fallback before executor resolution, submit write-back with configUpdateVersion 1 through the loader, and preserve later manual opt-ins. Keep all upgrade modifications in lib/config-updates.js.
-- Bind FastCtx to the resolved bash or a disabled executor sentinel; with no approved executor, do not publish background commands. Key shared runtimes by executor policy to prevent one component's fallback choice leaking into another.
-- Restore `npm run verify` against the current PNG icon, independent components, scoped command permissions, prompt tables, registry ownership and unload lifecycle. Fail on mount deadlines and bound each suite to 120 seconds.
-- Map the main package explicitly to the unchanged three payload packages at 0.2.1 and clarify historical Release assets/checksums and verification records.
-- Exclude the context-compaction beta branch entirely: no compaction component, dependency, code or bundle row.
-
-## [0.2.4] — Independently toggled components
-
-- Split the market bundle into shell (on), file (on), and background (off) rows with exported per-component titles, descriptions, icons and locales.
-- Publish five tools by default, nine with background enabled. Stop publishing duplicate foreground ops_run. Preserve the bash/PowerShell 7 routing and the object-root bash schema.
-- Own separate prompt sections for each component; visibility and shutdown withdraw only the matching guidance/tools. Do not append to AGENTS.md.
-- Share one ref-counted plugin-owned FastCtx connection for file/background. Drain in-flight calls and attempt to kill only remembered owned jobs when background stops; report cleanup failures.
-- Replace the unconditional bundle pwshPath override with a runtime-only official config lifecycle overlay; shell OFF recomputes the executor's current owning raw config without persisting changes.
-- Document release-age version selection and the limits of token savings. No host/vendor implementation, old regression suite, or Actions changes.
-
-## [0.2.3] — Strict-argument guidance and display metadata
-
-- Add one routing-section reminder: `ops_* arguments are strict: pass only declared fields.` Keep FastCtx's portable schema subset and runtime guards unchanged.
-- Use `dsh-ops` as the display title in both locales and align package/install descriptions with the maintainer's Windows bash, PowerShell 7, and Rust tools wording.
-- Replace the display icon with the maintainer-provided image, resized without cropping to a 256×256 PNG (119,677 bytes), below the official host's 256 KiB limit.
-- Reuse all three runtime payload dependencies at 0.2.1; preserve the 0.2.2 bash object-root schema fix.
-
-## [0.2.2] — Bash parameter schema hotfix
-
-- Fix `ops_bash` parameters to use a JSON Schema object root with `properties`, `required: ['command']`, and `additionalProperties: false`. The previous field map was forwarded unchanged by the official host and rejected by the model API before tool execution.
-- Reuse the three published Windows runtime packages at exact version 0.2.1; only the main plugin package changes.
-- Validate the exported schema through the official host tool registry without calling a model. Registry installation and shell version probes alone did not verify this boundary in 0.2.1.
-
-## [0.2.1] — Windows payload packaging — published
-
-Published to the public npm registry on 2026-10-08 as `dsh-ops@0.2.1` with
-`@dsh-ops/fastctx-win32-x64@0.2.1`, `@dsh-ops/bash-win32-x64@0.2.1` and
-`@dsh-ops/pwsh-win32-x64@0.2.1`. Packed sizes and registry digests:
-[docs/release-0.2.1.md](release-0.2.1.md).
-
-- Assemble complete digest-verified PortableGit/bash and PowerShell 7 runtime packages instead of metadata-only pins; inject all three Windows x64 runtime dependencies in the publish artifact.
-- Add explicit-profile install/status/uninstall delegation to the official DSH manager; map tui to dsh-tui and use Desktop's installation-owned CLI.
-- Resolve the pwsh dependency from the plugin package under pnpm isolation.
-- Make the default README Chinese and add a concise English translation.
-- Materialize PortableGit's hardlinked paths during assembly: npm rejects hard links with E415, so the shell packages publish regular files with identical bytes.
-- Fix credential selection: the first publish attempt used an unrelated local npm token and received E403. The maintainer's explicitly selected bypass credential was accepted; the earlier attribution of that failure to the maintainer's token was wrong.
-- Known unresolved item: complete corresponding-source delivery for the GPL/LGPL components in the PortableGit inventory was not collected or reviewed, and no source offer is claimed. Publication proceeded at the maintainer's explicit direction.
-
-## 0.2.8 — Missing bash payload diagnostics
-
-Issue #9 showed that a host package-manager prune can leave the bash payload declared in the profile lockfile but absent on disk. `ops_bash` now converts a spawn-time `ENOENT` into a concise actionable result instead of exposing a raw process exception. It does not silently fall back to an unapproved system shell.
-
-The Electron `workspace-write` `0xC0000142` ACL-runner failure is a DSH host sandbox issue outside this plugin's subprocess API. This release documents that boundary and does not claim to repair the host's Windows ACL runner.
-
-
-### Changed
-
-- Add `ops_bash.script_path` for executing existing scripts without placing their contents in a large JSON string; retain `command` for short commands and pipelines.
-- Guide the model to use `script_path` for long, heredoc-heavy or escape-heavy scripts, reducing malformed tool-call risk and wasted turn tokens.
-- Replace the execution ladder and duplicate prompt sections with one compact routing table.
-- Preserve `ops_bash` as the preferred general command executor in the tools → bash → PowerShell 7 design; publish it in full-access agent scopes with the host subprocess service. Keep the compact routing table and use pwsh only for necessary Windows-native operations.
-- Publish command/job tools only in plugin-owned agent fibers under authoritative per-session `danger-full-access`; reconcile `sandbox/mode` changes and recheck calls. No env/preset fallback.
-- Reject image inspection explicitly and advertise PDF text only; preserve batch text ranges, encodings, hex, search filtering, and batch replacement.
-- Shorten published schema descriptions and advertise only symmetric grep context. Forward ordinary arguments unchanged.
-- Track background-job ownership per session/connection; reject foreign output/kill, filter background footers, and project owned job listings/counts/pagination.
-- Withdraw tools on disconnect. Scope all definitions/disposers to plugin ownership, with no shared registry rewrite or host value imports.
-- Declare read-only sibling concurrency through the host's function API. Do not assert host timeout quiescence; preserve the existing transport deadline.
-
-### Measurement and validation
-
-- Add a standalone schema measurement command and pre-change baseline, not a test gate.
-- Document manual acceptance and limits. No regression tests/CI added, existing tests neither updated nor run for this change.
-- Filesystem confinement of FastCtx file tools, per-command approval escalation, and cancellation quiescence remain outside this pass.
-
-## [0.2.0] - Unreleased
-
-The command-execution ladder, the plugin's own shells, the runtime package and the
-two shell pins that bring them, and the end of the MCP bridge dependency. Not
-published either: the repository still has no remote and no release tags, and this
-entry is where `package.json` / `dsh-plugin.json` move to `0.2.0`; no tag has been
-cut from it.
-
-### Added
-
-- **The command-execution ladder.** `lib/policy.js` renders the repository-tooling
-  section as an explicit ladder — FastCtx (`ops_*`), then `ops_bash`, then
-  PowerShell 7, then the host's own shell tools as the last resort — naming only the
-  rungs the model can actually reach and renumbering the rest, so the text the model
-  reads has no gaps. Preference is wording: the plugin never retries a failed call
-  on another rung and never cascades at run time.
-- **`ops_bash`** — the plugin's own bash, published as an ordinary tool through
-  `ctx.tools.register` (only while the host's subprocess service is mounted) and
-  executed through `ctx.get('subprocess')`, so commands run under the harness's own
-  credential scrub, output spilling, and process termination. Its environment is the
-  terminal overrides (`NO_COLOR`, `TERM`, `PAGER`, `GIT_PAGER`) and nothing else: it
-  forwards no credential-shaped name and no `DSH_*` fact, and it never writes
-  `process.env`, `PATH`, or the working directory.
-- **PowerShell 7 as rung 3.** The bundle patch re-points the host's `pwsh-sandbox`
-  row at the plugin's own pwsh through a `!!js` `pwshPath` — Windows-gated,
-  `lstat`-based usability checks over both bundled layouts in one order (the
-  installed `@dsh-ops/pwsh-<platform>-<arch>` package first, then the vendored copy),
-  and a wrapping `try`/`catch`. A deployment whose package carries neither copy gets
-  `undefined`, which is the row's own default, so the host's PowerShell resolution is
-  untouched. A profile overrides the entry in its own `cordis.patch.yml`, which
-  applies after every bundle layer.
-- **Per-agent visibility under `deny-host-shell`.** On `agent/created` the plugin
-  masks the configured host shell tools out of that agent's view with
-  `agent.ctx.tools.restrict({ deny })` — only while a rung of its own is live; the
-  fence at `tools/pre-execute` stays the guarantee, and the mask's disposer is owned
-  by the plugin as well, so unloading lifts it. With no rung of the plugin's own, the
-  fence is kept, visibility is left alone, and the reason is reported once.
-- Three config keys: `bashPath` (an explicit bash for rung 2, authoritative),
-  `publishBashTool` (default `true`), and `allowSystemShellFallback` (default
-  `true`, to confine rung 2 to plugin-provided shells).
-- **One runtime package, and two pins instead of two redistributions.**
-  `@dsh-ops/fastctx-<platform>-<arch>` carries this fork's slimmed FastCtx build
-  (`bin/fastctx.exe`), built here. `@dsh-ops/bash-<platform>-<arch>` and
-  `@dsh-ops/pwsh-<platform>-<arch>` carry **metadata only** — the upstream URL,
-  release, version, byte count, and SHA-256 of Git for Windows PortableGit and of
-  PowerShell 7. Neither upstream binary is repackaged, forwarded, or redistributed
-  by this distribution; the tag's GitHub Release carries this distribution's own
-  tarballs and a `SHA256SUMS`, and nothing upstream's. `PROVENANCE.md` records every
-  pin and licence.
-- **`dsh-ops provision-shells [--bash|--pwsh]`.** Reads a pin, downloads that
-  upstream archive on the user's own machine, verifies it against the pinned
-  SHA-256, and unpacks it under `<DSH_HOME>/dsh-ops/shells/<name>/<version>/`, which
-  is the first place both shell rungs resolve from. Nothing is downloaded at plugin
-  load time, and nothing is downloaded unless the command is run.
-- **`dsh-ops ladder`.** The CLI prints each rung's availability and the executable it
-  came from, together with the rungs the prompt text renders for that answer, so a
-  deployment can confirm which shells took effect without opening a session.
-- **The shell resolution gained a provisioned tier, and so did the runtime chain.**
-  Rung 2 resolves `config.bashPath`, then the provisioned copy, then a packaged copy,
-  then `PATH`, then the well-known installs; rung 3 and the bundle patch that
-  re-points the host's `pwsh-sandbox` row walk the same layouts in the same order. On
-  the runtime side, the FastCtx chain tries `@dsh-ops/fastctx-<platform>-<arch>` ahead
-  of the upstream `@fastctx/<platform>-<arch>` step, so an install gets this fork's
-  build by default while a deployment without it still falls through to the vendored
-  source build, the upstream package, or `fastctx` on `PATH`.
-
-### Changed
-
-- The repository-tooling section is no longer a flat tool list; it is the ladder
-  above, rendered from the rungs the model can actually reach.
-- `dsh-plugin.json` declares a second tool namespace for the tools the plugin
-  registers itself (`ops_bash`, `transport: in-process`), and the manifest gate
-  checks it against the fully-open ladder text.
-- **This distribution's own platform packages are injected into
-  `optionalDependencies` at release time, not committed.** Before the first release
-  those names resolve nowhere, so listing them in the repository would put a failed
-  optional fetch into every contributor's install log for no gain; the release step
-  writes them, and the tarball it publishes is the one that declares them. The two
-  shell pins cost an install nothing to declare, because they hold metadata and no
-  binaries.
-- The package version moves to `0.2.0` in `package.json` and `dsh-plugin.json`.
-
-### Removed
-
-- `pwshPath` and `overridePwshExecutor` are not config keys and now fail as unknown
-  keys. A bundle patch is evaluated before any `dsh-ops` row is mounted, so a key
-  could never reach the `pwsh-sandbox` override; rung 3 follows the executable
-  instead, and the override is the patch entry documented above.
-- `@deepseek-ai/dsh-mcp-client`, along with the `BRIDGE_PACKAGE` declaration and the
-  manifest check that required it. The plugin holds the MCP stdio connection to the
-  FastCtx server it spawns and publishes the tools itself (`lib/handshake.js`,
-  `lib/tools.js`); it no longer mounts a bridge, and the 0.1.0 entry's
-  registry-boundary renaming is gone with it.
-
-### Fixed
-
-- **`ops_bash` registers on the real host.** Its output schema used type arrays
-  (`['integer', 'null']`), which the harness's schema gate rejects outright, so the
-  tool could not be registered at all. Every `type` is now a single type and
-  `exitCode`/`signal` are optional properties: an unknown exit fact omits the key
-  rather than sending `null`.
-- **Rung 3 and the host row are one fact.** The bundle patch's expression and the
-  plugin's own probe now walk the same two bundled layouts
-  (`BUNDLED_LAYOUT_ORDER`) in the same order with the same `lstat` test, so the
-  ladder cannot advertise a PowerShell rung the host row does not run — or miss one
-  it would.
-- **The visibility mask follows the rungs that are live.** `deny-host-shell` used to
-  hide the host shell tools whenever a bash merely resolved. The question is now
-  asked of the ladder the model can reach — `ops_bash` published, or the PowerShell
-  rung live — and asked again as each agent appears. With no rung of the plugin's
-  own, visibility is left alone and the reason is reported once; the
-  `tools/pre-execute` fence is unchanged and is installed by the mode alone.
-
-## [0.1.0] - Unreleased
-
-The first version. Not published: the repository has no remote and no release
-tags, and `package.json` still carries `"private": true`.
-
-### Added
-
-- The plugin itself: one bundle that mounts the FastCtx MCP runtime as the
-  profile's repository tool surface, publishes its tools under a namespace of the
-  plugin's own, and injects two prompt sections that steer repository work away
-  from the host shell.
-- `shellPolicy: deny-host-shell` — an opt-in `tools/pre-execute` fence that
-  refuses the configured host shell tools by name. FastCtx's own tools are never
-  refused, so command execution stays available.
-- The `dsh-ops` CLI: `resolve`, `status`, `build`, and `provision`. `provision`
-  installs the built runtime into `<DSH_HOME>/dsh-ops/bin/` and writes a receipt
-  recording its origin, version, and SHA-256.
-- Composite licensing — MIT for the plugin, Apache-2.0 for `vendor/fastctx/` —
-  with FastCtx's required notice reproduced verbatim in `README.md`,
-  `README.zh.md`, and `NOTICE`.
-
-### Changed
-
-- **The FastCtx tools are published as `ops_*`.** The bridge's own
-  `mcp__<serverName>__<rawName>` naming is transport vocabulary in every
-  transcript, so registrations inside this plugin's bridge namespace are renamed
-  at the registry boundary: the model calls `ops_grep`, and a transcript shows
-  `ops_grep`. The `mcp__fastctx__*` names never reach the model.
-- **The vendored FastCtx is stripped to its MCP server.** Upstream's control
-  terminal (`src/tui/`), self-updater and upstream-version check (`src/update/`),
-  and Codex integration — including `control/i18n.rs` and the other locale
-  catalogs — are deleted rather than left unreachable, along with the
-  distribution and CI machinery. 57 files changed, 285 insertions and 24,715
-  deletions. The binary now carries `serve` plus the internal entry points the
-  shell and session machinery spawn.
-- `PROVENANCE.md` now records what was read from the readable `0.2.0-rc.2`
-  source, with file and line, next to what a suite actually ran.
-
-### Removed
-
-- Upstream's `.github/`, `packages/` (the npm launcher, `codex-fastctx`, and the
-  five `@fastctx/<platform>` binary packages), and `scripts/`.

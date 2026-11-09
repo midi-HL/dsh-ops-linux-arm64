@@ -1,15 +1,17 @@
 /** Typed OPS shell boundary; host classes are borrowed through services, never imported as values. */
 import type { OpsErrorPayload } from '../kernel/outcome.js'
-import type { ToolDefinition, ToolRunContext } from '@deepseek-ai/dsh-tools'
-import type { JsonSchemaNode } from '@deepseek-ai/dsh-tools'
-import type { SandboxExecutionPolicy, SandboxProvider } from '@deepseek-ai/dsh-sandbox'
-import type { SandboxPolicyService } from '@deepseek-ai/dsh-sandbox-policy'
-import type { SubprocessRuntime, SubprocessOutputReader } from '@deepseek-ai/dsh-subprocess'
+import type { ToolDefinition, ToolRunContext } from '../adapter/dsh/types.js'
+import type { JsonSchemaNode } from '../adapter/dsh/types.js'
+import type { SandboxExecutionPolicy, SandboxProvider } from '../adapter/dsh/types.js'
+import type { SandboxPolicyService } from '../adapter/dsh/types.js'
+import type { SubprocessRuntime, SubprocessOutputReader } from '../adapter/dsh/types.js'
 
-export type ShellCall = Partial<Pick<ToolRunContext, 'agent' | 'callId' | 'signal'>>
+export type ShellCall = Partial<Pick<ToolRunContext, 'agent' | 'callId' | 'signal' | 'token' | 'parent'>>
 export type ShellPolicy = SandboxExecutionPolicy
 export interface ShellStream { text: string; truncated: boolean; spillPath?: string; bytes?: number; bytesTotal?: number; lines?: number }
 export interface ShellResult {
+  resolvedFrom?: string
+  cwdSource?: string
   exitCode?: number | null
   signal?: string | null
   error?: string
@@ -27,8 +29,8 @@ export interface ShellResult {
 }
 export type SettledShellResult = ShellResult & { status: 'completed' | 'failed' }
 export type HostForeground = SettledShellResult & { kind: 'foreground'; exitCode: number | null; signal: string | null; aborted: boolean }
-export type HostBashResult = HostForeground | { kind: 'background'; jobId: string }
-  | { kind: 'promoted'; jobId: string; timeoutMs: number; output: string }
+export type HostBashResult = (HostForeground | { kind: 'background'; jobId: string; label: string }
+  | { kind: 'promoted'; jobId: string; label: string; timeoutMs: number; output: string }) & Pick<ShellResult, 'resolvedFrom' | 'cwdSource'>
 export interface ShellExecution {
   status: 'running' | 'completed' | 'killed'
   readonly started: boolean

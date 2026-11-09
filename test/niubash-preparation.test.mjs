@@ -1,0 +1,188 @@
+/** Deterministic lifetime regressions; no developer runtime is needed for cleanup semantics. */
+import fs from 'node:fs'
+import path from 'node:path'
+import { setTimeout as delay } from 'node:timers/promises'
+import { disposeNiubash, prepareNiubash } from '../lib/niubash/runtime.js'
+import { nodeTreeOps } from '../lib/niubash/execution-tree.js'
+import { removeSealedTree } from '../lib/niubash/seal.js'
+import { startSessionBash } from '../lib/shells/session-execution.js'
+import { assert, test, report, withTempDir, skipSuite } from './lib/harness.mjs'
+
+await test('cleanup rejection is diagnostic, never replaces a successful command or leaks rejection', async () => {
+  const warnings = [], unhandled = []
+  const listener = error => unhandled.push(error)
+  process.on('unhandledRejection', listener)
+  try {
+    const value = { exitCode: 0, stdout: 'kept' }
+    const settled = Promise.resolve(value).finally(() => disposeNiubash(async () => { throw Object.assign(new Error('locked'), { code: 'EPERM' }) }, text => warnings.push(text)))
+    const done = settled.then(() => undefined, () => undefined)
+    assert.equal(await settled, value)
+    await done; await delay(10)
+    assert.equal(warnings.length, 1); assert.match(warnings[0], /EPERM|locked/)
+    assert.deepEqual(unhandled, [])
+  } finally { process.off('unhandledRejection', listener) }
+})
+
+if (process.platform === 'win32' && !process.env.DSH_OPS_TEST_NIUBASH) skipSuite('niubash-preparation', 'requires frozen DSH_OPS_TEST_NIUBASH for production preparation checks')
+if (process.platform === 'win32') {
+  await test('preparation deadline and cancellation stop staging before spawn, then dispose after writes stop', async () => {
+    await withTempDir('niu-preparation', async root => {
+      const file = process.env.DSH_OPS_TEST_NIUBASH
+      const policy = { mode: 'read-only', workspaceRoot: root }
+      const agent = { session: { id: 'preparation' } }
+      let spawns = 0, cloning = false, clonedRoot
+      const original = nodeTreeOps.link
+      // The clone is one link per payload member; pin the first one so the
+      // deadline/cancellation races the real production clone instead of a mock tree.
+      nodeTreeOps.link = async (source, target) => {
+        if (cloning) return original(source, target)
+        let current = path.dirname(target)
+        while (!path.basename(current).startsWith('dsh-ops-niu-exec-')) current = path.dirname(current)
+        clonedRoot = current
+        cloning = true
+        try { for (let n = 0; n < 1000; n++) await delay(5) } finally { cloning = false }
+        return original(source, target)
+      }
+      const ctx = { get(name) {
+        if (name === 'sandboxPolicy') return { resolve: () => policy }
+        if (name === 'subprocess') return { spawn() { spawns++; throw Error('must not spawn') } }
+      } }
+      try {
+        for (const cancel of [false, true]) {
+          clonedRoot = undefined
+          const controller = new AbortController()
+          const execution = startSessionBash({ ctx, bash: { file, source: 'bundled' }, active: () => true },
+            { command: 'printf never', workdir: root, timeoutMs: cancel ? 10000 : 500, includeDiagnostics: true }, { agent, signal: controller.signal }, policy, policy, {}, {})
+          assert.equal(execution.started, false, 'handle exists before staging completes')
+          if (cancel) {
+            while (!cloning) await delay(5)
+            controller.abort(new Error('cancel staging'))
+          }
+          const value = await execution.result()
+          assert.equal(cancel ? value.cancelled : value.timedOut, true, JSON.stringify(value))
+          assert.equal(spawns, 0); assert.equal(cloning, false)
+          assert.ok(clonedRoot, 'injected slow cloning was reached')
+          assert.equal(fs.existsSync(clonedRoot), false, 'no asynchronous staging survives cleanup')
+          assert.ok(value.diagnostics.durationMs >= (cancel ? 1 : 450))
+        }
+      } finally { nodeTreeOps.link = original }
+    })
+  })
+  await test('production session cleanup failure preserves success and leaves no unhandled done rejection', async () => {
+    await withTempDir('niu-cleanup', async root => {
+      const warnings = [], unhandled = []
+      const listener = error => unhandled.push(error)
+      const policy = { mode: 'danger-full-access', workspaceRoot: root }
+      let spawned = 0
+      const ctx = { logger: { warn: text => warnings.push(text) }, get(name) {
+        if (name === 'sandboxPolicy') return { resolve: () => policy }
+        if (name === 'subprocess') return { spawn() { spawned += 1; return { done: Promise.resolve({ exitCode: 0 }), collected: {
+          stdout: { readFrom: () => ({ text: 'preserved', nextOffset: 9, lossy: false }) },
+          stderr: { readFrom: () => ({ text: '', nextOffset: 0, lossy: false }) },
+        } } } }
+      } }
+      const original = fs.promises.rm
+      let executionRoot
+      fs.promises.rm = async (target, options) => {
+        // Only the post-command disposal is failed here; the cross-volume clone
+        // fallback also removes its scratch root before the command is spawned.
+        if (spawned > 0 && path.basename(target).startsWith('dsh-ops-niu-exec-')) {
+          executionRoot = target
+          throw Object.assign(new Error('deterministic locked execution tree'), { code: 'EPERM' })
+        }
+        return original(target, options)
+      }
+      process.on('unhandledRejection', listener)
+      try {
+        const execution = startSessionBash({ ctx, bash: { file: process.env.DSH_OPS_TEST_NIUBASH, source: 'bundled' }, active: () => true },
+          { command: 'printf preserved', workdir: root }, { agent: { session: { id: 'cleanup' } } }, policy, policy, {}, {})
+        const value = await execution.result()
+        assert.equal(value.exitCode, 0, JSON.stringify(value)); assert.equal(value.stdout.text, 'preserved')
+        await execution.done; await delay(10)
+        assert.equal(warnings.length, 1); assert.match(warnings[0], /locked execution tree/)
+        assert.deepEqual(unhandled, [])
+      } finally {
+        process.off('unhandledRejection', listener)
+        fs.promises.rm = original
+        // Clear the seal before deleting the tree the failed disposal left behind.
+        if (executionRoot) await removeSealedTree(executionRoot)
+      }
+    })
+  })
+  await test('parallel production trees remain usable across overlapping calls and drain after disposal', async () => {
+    const file = process.env.DSH_OPS_TEST_NIUBASH
+    const baseline = fs.statSync(file).nlink
+    for (let round = 0; round < 2; round++) {
+      const runtimes = []
+      const roots = []
+      try {
+        // allSettled retains every successful handle even if another preparation
+        // fails, so a failed regression never leaves unowned trees behind.
+        const results = await Promise.allSettled(Array.from({ length: 2 }, () =>
+          prepareNiubash(file, '', new AbortController().signal)))
+        for (const result of results) if (result.status === 'fulfilled') {
+          runtimes.push(result.value); roots.push(path.dirname(result.value.file))
+        }
+        for (const result of results) if (result.status === 'rejected') throw result.reason
+        for (const runtime of runtimes) await runtime.verify()
+        await runtimes[0].dispose()
+        await runtimes[1].verify()
+        const later = await prepareNiubash(file, '', new AbortController().signal)
+        runtimes.push(later); roots.push(path.dirname(later.file))
+        await runtimes[1].verify(); await later.verify()
+      } finally { for (const runtime of runtimes) await runtime.dispose() }
+      for (const root of roots) assert.equal(fs.existsSync(root), false, 'completed trees are reclaimed')
+      assert.equal(fs.statSync(file).nlink, baseline, 'no hardlink accumulation after concurrency')
+    }
+  })
+  await test('derived faces and extra executable members fail closed', async () => withTempDir('niu-tamper-private', async base => {
+    const previousRoot = process.env.DSH_OPS_EXEC_ROOT
+    process.env.DSH_OPS_EXEC_ROOT = path.join(base, 'executions')
+    let runtime
+    try {
+      // Tamper a private copy, never a shared executable inode that an earlier
+      // real-host suite or an image scanner may still have mapped.
+      runtime = await prepareNiubash(process.env.DSH_OPS_TEST_NIUBASH, '', new AbortController().signal, { workspaceRoot: base })
+    } finally {
+      if (previousRoot === undefined) delete process.env.DSH_OPS_EXEC_ROOT
+      else process.env.DSH_OPS_EXEC_ROOT = previousRoot
+    }
+    const root = path.dirname(runtime.file)
+    const face = path.join(root, 'winuxcmd/usr/bin/cat.exe')
+    try {
+      const saved = await fs.promises.readFile(face)
+      // A privileged process can clear the seal; the stat check must still notice
+      // the size change and the missing read-only bit.
+      await runtime.unseal()
+      await fs.promises.appendFile(face, 'tamper')
+      // The unseal covers the whole shared tree, so the stat check may notice the
+      // missing seal before the tampered size; either rejection is the same fail-closed result.
+      await assert.rejects(runtime.verify(), /not sealed|size mismatch/)
+      // verify() re-applies the seal before its stat check, so clear it again
+      // before restoring the tampered bytes.
+      await runtime.unseal()
+      await fs.promises.writeFile(face, saved)
+      await runtime.seal()
+      await runtime.verify()
+
+      await runtime.unseal()
+      const extra = path.join(root, 'winuxcmd/usr/bin/untrusted.exe')
+      await fs.promises.writeFile(extra, 'extra')
+      await assert.rejects(runtime.verify(), /Unsafe Niubash execution tree member/)
+      await fs.promises.unlink(extra)
+
+      // Private copies keep an exact link count, unlike shared payload clones.
+      await runtime.seal()
+      const alias = `${root}-outside-hardlink`
+      await fs.promises.link(face, alias)
+      await assert.rejects(runtime.verify(), /link count mismatch/)
+      // The alias shares the deny ACL/READONLY attribute too; clear them before
+      // unlinking, then restore the live tree's seal.
+      await runtime.unseal()
+      await fs.promises.unlink(alias)
+      await runtime.seal()
+      await runtime.verify()
+    } finally { await runtime.dispose() }
+  }))
+}
+report('niubash-preparation')

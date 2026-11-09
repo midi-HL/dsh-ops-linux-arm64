@@ -1,18 +1,23 @@
 // Adapted from @deepseek-ai/dsh-tool-bash 0.2.0-rc.2 (MIT). See licenses/deepseek-harness/LICENSE.
 /** Host-compatible consumer over an OPS-owned executor; host services stay scoped and borrowed. */
-import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
-import type { JsonSchemaNode } from '@deepseek-ai/dsh-tools'
+import type { ToolDefinition } from '../adapter/dsh/types.js'
+import type { JsonSchemaNode } from '../adapter/dsh/types.js'
 import type { ShellContext, ShellBase, ShellCall, ShellPolicy, CreateShellExecution, StartShell, ShellExecution, ShellJobs, HostBashResult, HostShellDefinition } from './types.js'
 import { errorMessage } from './types.js'
 import { BashArgumentError, isBashArgumentError } from './argument-error.js'
 import { approveBashPolicy } from './approval.js'
 import { HOST_BASH_OUTPUT_SCHEMA, hostFailure, hostForeground, renderHostBash } from './host-contract.js'
 import { BashJobAdmissionError, startBashJob, waitOnBashJob } from './jobs.js'
+import { createJsonDigestProjection } from './json-digest.js'
+import { bashOperationDescription } from './prompt.js'
+
+import { bashPresentationMeta, presentBashCall, presentBashResult } from './presentation.js'
+import type { DirectoryBasis } from '../adapter/dsh/working-directory.js'
 
 export const HOST_MAX_BASH_TIMEOUT_MS = 600_000
 
 export function hostBashDefinition(ctx: ShellContext, base: ShellBase, createExecution: CreateShellExecution,
-  resolveWorkdir: (args: Record<string, unknown>, session: NonNullable<ShellCall['agent']>['session'] | undefined) => unknown,
+  resolveWorkdir: (args: Record<string, unknown>, session: NonNullable<ShellCall['agent']>['session'] | undefined, exec: ShellCall) => unknown,
   jobs?: ShellJobs): HostShellDefinition {
   // The registry arrives already bound by the component (`ctx.inject(['jobs'], …)`), exactly as the
   // host's own bash tool does it. Re-reading a tracked service at call time returns a fresh traceable
@@ -26,13 +31,20 @@ export function hostBashDefinition(ctx: ShellContext, base: ShellBase, createExe
     sandbox_permissions: { type: 'string', enum: ['workspace-write', 'danger-full-access'], description: 'After a real denial, request the narrowest wider mode for this exact command with justification. Approval applies only to this call. Do not bypass a rejection.' },
     justification: { type: 'string', description: 'One sentence explaining why this command needs wider access, in the user’s language. Required when changing sandbox_permissions.' },
   } }
+  const projection = createJsonDigestProjection()
   return {
     ...base,
-    description: 'Execute a Bash command in a fresh shell using the host sandbox, approvals and jobs. Relative workdir uses the current session workspace. Output is bounded with spill paths. Use command for host-compatible calls; script_path is an OPS extension for an existing script file. Verify resolved absolute targets before delete or move. Never bypass a sandbox denial by switching shells.',
+    description: bashOperationDescription() + 'Execution uses the host sandbox, approvals and jobs. Relative workdir uses the current session workspace. Output is bounded with spill paths. Use command for short commands; script_path is an OPS extension for an existing Bash script file. description is required. Check kind: foreground includes status and exitCode; background/promoted includes jobId, not a completed exit. Failures return failure.code/effectState/retry; inspect unknown effects before repeating. Verify resolved absolute targets before delete or move. Never bypass a sandbox denial by switching shells.',
     parameters: { ...parameters },
+    projectContent: projection.projectContent,
     // The host validates this value against the declared schema before invoking its renderer.
-    output: { schema: HOST_BASH_OUTPUT_SCHEMA, render: (_args, value) => [{ type: 'text', text: renderHostBash(value as unknown as HostBashResult) }] },
+    output: { schema: HOST_BASH_OUTPUT_SCHEMA, render: (_args, value) => [{ type: 'text', text: renderHostBash(value as unknown as HostBashResult) }], presentationMeta: bashPresentationMeta },
+    presentCall: presentBashCall,
+    presentResult: presentBashResult,
     async execute(input: unknown, exec: ShellCall = {}): Promise<HostBashResult> {
+      let basis: DirectoryBasis | undefined
+      const stamp = (value: HostBashResult): HostBashResult => basis ? { ...value, resolvedFrom: basis.cwd, cwdSource: basis.source } : value
+      const complete = async (value: HostBashResult) => { value = stamp(value); await projection.prepare(value, exec); return value }
       let timeoutMs = 120_000
       let policy: ShellPolicy | undefined
       let attempted = false
@@ -47,7 +59,11 @@ export function hostBashDefinition(ctx: ShellContext, base: ShellBase, createExe
         if (local.timeoutMs !== undefined && (typeof local.timeoutMs !== 'number' || !Number.isFinite(local.timeoutMs) || local.timeoutMs <= 0)) throw new BashArgumentError('invalid timeoutMs: expected a positive finite number', 'timeoutMs')
         timeoutMs = Math.min(local.timeoutMs ?? 120_000, HOST_MAX_BASH_TIMEOUT_MS)
         local.timeoutMs = timeoutMs
-        local.workdir = resolveWorkdir(local, exec.agent?.session)
+        const resolved = await resolveWorkdir(local, exec.agent?.session, exec)
+        if (resolved !== null && typeof resolved === 'object' && 'basis' in resolved && 'workdir' in resolved) {
+          basis = resolved.basis as DirectoryBasis
+          local.workdir = resolved.workdir
+        } else local.workdir = resolved
         // Pure validation occurs before approval, job admission or physical preparation.
         base.resolve(local)
         if (typeof args.description !== 'string' || !args.description.trim()) throw new BashArgumentError('invalid description: expected a non-empty string', 'description')
@@ -65,19 +81,19 @@ export function hostBashDefinition(ctx: ShellContext, base: ShellBase, createExe
         }
         if (jobs) {
           let attached
-          try { attached = startBashJob(jobs, args as { command?: string; script_path?: string }, exec, start) }
+          try { attached = startBashJob(jobs, args as { description: string; command?: string; script_path?: string }, exec, start) }
           catch (error) {
             if (run_in_background || attempted || error instanceof BashJobAdmissionError && error.runInvoked) throw error
             ctx.logger?.warn?.(`Bash job admission refused; using the foreground deadline: ${errorMessage(error)}`)
           }
-          if (attached) return run_in_background ? { kind: 'background', jobId: attached.id } : await waitOnBashJob(jobs, attached, exec, timeoutMs)
+          if (attached) return run_in_background ? stamp({ kind: 'background', jobId: attached.id, label: attached.label }) : await complete(await waitOnBashJob(jobs, attached, exec, timeoutMs))
         } else if (run_in_background) return hostFailure('EXECUTOR_UNAVAILABLE: the host job registry is unavailable.', timeoutMs)
         const execution = await start(exec, {})
         const result = await execution.result()
-        return hostForeground(result, execution.started ? 'unknown' : 'none')
+        return await complete(hostForeground(result, execution.started ? 'unknown' : 'none'))
       } catch (error) {
         const message = isBashArgumentError(error) ? `INVALID_BASH_ARGUMENT: ${errorMessage(error)}` : errorMessage(error)
-        return { ...hostFailure(message, timeoutMs, process ? (process.started ? 'unknown' : 'none') : attempted ? 'unknown' : 'none', exec.signal?.aborted === true), ...(policy ? { sandbox: { mode: policy.mode, denied: false } } : {}) }
+        return stamp({ ...hostFailure(message, timeoutMs, process ? (process.started ? 'unknown' : 'none') : attempted ? 'unknown' : 'none', exec.signal?.aborted === true), ...(policy ? { sandbox: { mode: policy.mode, denied: false } } : {}) })
       }
     },
   } satisfies ToolDefinition

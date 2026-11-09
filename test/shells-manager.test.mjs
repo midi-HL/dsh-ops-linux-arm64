@@ -38,26 +38,72 @@ await test('a linked managed ancestor is refused before any removal', async () =
   })
 })
 
-await test('Git selection prints an absolute config and never chooses a PATH WSL launcher', async () => {
+await test('cache cleanup is preview-only until all hosts are explicitly stopped', async () => {
+  await withTempDir('manager-cache-clean', home => {
+    const cache = path.join(home, 'dsh-ops/bash-ipc')
+    const names = ['a', 'b', 'c'].map(value => value.repeat(24))
+    for (const [index, name] of names.entries()) {
+      const dir = path.join(cache, name)
+      fs.mkdirSync(dir, { recursive: true })
+      fs.writeFileSync(path.join(dir, '.ops-ipc.json'), JSON.stringify({ identity: name, files: {}, tree: {} }))
+      fs.writeFileSync(path.join(dir, 'payload.bin'), 'fixture')
+      fs.utimesSync(dir, new Date(2026, 0, index + 1), new Date(2026, 0, index + 1))
+    }
+    const unknown = path.join(cache, 'backup.stale-notes')
+    fs.mkdirSync(unknown)
+    const call = args => spawnSync(process.execPath, [path.join(PACKAGE_ROOT, 'bin/dsh-ops.mjs'), 'bash-runtime', 'clean-cache', ...args], { encoding: 'utf8', env: { ...process.env, DSH_HOME: home } })
+    const preview = call([])
+    assert.equal(preview.status, 0, preview.stderr)
+    assert.equal(JSON.parse(preview.stdout).action, 'preview')
+    assert.equal(fs.existsSync(path.join(cache, names[0])), true)
+    assert.notEqual(call(['--yes']).status, 0)
+    assert.equal(fs.existsSync(path.join(cache, names[0])), true)
+    assert.equal(call(['--yes', '--all-hosts-stopped', '--dry-run']).status, 0)
+    assert.equal(fs.existsSync(path.join(cache, names[0])), true)
+    const applied = call(['--yes', '--all-hosts-stopped'])
+    assert.equal(applied.status, 0, applied.stderr)
+    assert.equal(fs.existsSync(path.join(cache, names[0])), false)
+    assert.equal(fs.existsSync(path.join(cache, names[2])), true)
+    assert.equal(fs.existsSync(unknown), true)
+  })
+})
+
+await test('Git selection prints an absolute executable and never chooses a PATH WSL launcher', async () => {
   await withTempDir('manager-git', root => {
     const file = path.join(root, 'programs/Git/bin/bash.exe'), wsl = path.join(root, 'system/System32/bash.exe')
     for (const target of [file, wsl]) { fs.mkdirSync(path.dirname(target), { recursive: true }); fs.writeFileSync(target, 'fixture') }
     const env = { ProgramFiles: path.join(root, 'programs'), SystemRoot: path.join(root, 'system'), PATH: path.dirname(wsl), DSH_HOME: root }
     assert.deepEqual(gitBashCandidates({ env, platform: 'win32' }).filter(value => value.startsWith(root)), [file])
     const selected = selectBashRuntime('git', { env, platform: 'win32' })
-    assert.equal(selected.config.bashPath, file); assert.equal(selected.restricted.compatible, false)
+    assert.equal(selected.clear, false)
+    assert.equal(selected.engine, 'msys')
+    assert.equal(selected.file, file)
+    assert.match(selected.restriction, /verified|restricted|restricted-mode|MSYS|compatib|msys-2\.0/i)
+    // A path the scan does not know is still usable, and it wins over the scan.
+    const custom = path.join(root, 'elsewhere/bash.exe')
+    fs.mkdirSync(path.dirname(custom), { recursive: true }); fs.writeFileSync(custom, 'fixture')
+    assert.equal(selectBashRuntime('git', { env, platform: 'win32', path: custom }).file, custom)
+    assert.throws(() => selectBashRuntime('git', { env, platform: 'win32', path: 'bin/bash.exe' }), /must be absolute/)
     assert.equal(fs.existsSync(path.join(root, 'config.json')), false)
     assert.deepEqual(gitBashCandidates({ env, platform: 'linux' }), [])
   })
 })
 
-await test('managed selection retains the provisioned store layout and absence is actionable', async () => {
+await test('the default rung is a removal, and a legacy provisioned copy stays selectable', async () => {
   await withTempDir('manager-select', home => {
     assert.deepEqual(managedBashInventory({ env: { DSH_HOME: home } }), [])
-    assert.throws(() => selectBashRuntime('managed', { env: { DSH_HOME: home }, platform: 'win32', arch: 'x64' }), /bash-runtime install/)
-    seed(home, '9.0', false)
-    const directory = seed(home, '2.0')
-    assert.equal(selectBashRuntime('managed', { env: { DSH_HOME: home }, platform: 'win32', arch: 'x64' }).file, path.join(directory, 'bin/bash.exe'))
+    const niubash = selectBashRuntime('niubash', { env: { DSH_HOME: home }, platform: 'win32', arch: 'x64' })
+    assert.equal(niubash.clear, true)
+    assert.equal(niubash.engine, 'niubash')
+    // No payload in this home: the answer is either the packaged payload or a stated absence.
+    assert.ok(niubash.file === undefined || /niu\.exe$/i.test(niubash.file))
+    if (niubash.file === undefined) assert.match(niubash.detail, /bash-runtime install/)
+    // A legacy provisioned copy stays a candidate, and naming it selects it exactly;
+    // a scan answers with whatever real installation it finds first.
+    const directory = seed(home, '2.0'), legacy = path.join(directory, 'bin/bash.exe')
+    const env = { DSH_HOME: home }
+    assert.ok(gitBashCandidates({ env, platform: 'win32' }).includes(legacy))
+    assert.equal(selectBashRuntime('git', { env, platform: 'win32', arch: 'x64', path: legacy }).file, legacy)
   })
 })
 
@@ -78,22 +124,49 @@ await test('the real CLI previews removal and applies it only with yes', async (
     assert.notEqual(call(['invalid']).status, 0)
     const install = call(['install', '--dry-run'])
     assert.equal(install.status, process.platform === 'win32' ? 0 : 1, install.stderr)
-    if (process.platform === 'win32') assert.match(install.stdout, /dry run: no download, no writes/)
+    if (process.platform === 'win32') assert.match(install.stdout, /would provision complete Niubash/)
   })
 })
 
-await test('the Windows Bash payload is a declared, locked and assembled optional dependency', async () => {
+await test('bash-runtime status reports the private runtime cache without writing to it', async () => {
+  await withTempDir('manager-status', (home) => {
+    const cache = path.join(home, 'dsh-ops', 'bash-ipc')
+    const current = 'a'.repeat(24), older = 'b'.repeat(24)
+    for (const [name, size] of [[current, 7], [older, 11]]) {
+      fs.mkdirSync(path.join(cache, name), { recursive: true })
+      fs.writeFileSync(path.join(cache, name, 'payload.bin'), Buffer.alloc(size))
+      const when = new Date(Date.UTC(2026, 0, 2))
+      fs.utimesSync(path.join(cache, name), when, when)
+    }
+    const bash = path.join(home, 'bash-stub')
+    fs.writeFileSync(bash, 'stub')
+    const config = path.join(home, 'config.json')
+    fs.writeFileSync(config, JSON.stringify({ bashPath: bash, allowSystemShellFallback: false }))
+    const run = spawnSync(process.execPath, [path.join(PACKAGE_ROOT, 'bin/dsh-ops.mjs'), 'bash-runtime', 'status', '--config', config],
+      { encoding: 'utf8', env: { ...process.env, DSH_HOME: home } })
+    assert.equal(run.status, 0, run.stderr)
+    const parsed = JSON.parse(run.stdout)
+    assert.equal(parsed.bashIpc.root, cache)
+    assert.equal(parsed.bashIpc.generations, 2)
+    assert.equal(parsed.bashIpc.totalBytes, 18)
+    // Unmarked legacy directories are observed, never claimed automatically reclaimable.
+    assert.equal(parsed.bashIpc.reclaimableBytes, 0)
+    assert.deepEqual(parsed.bashIpc.entries.map((entry) => entry.name), [current, older])
+    assert.equal(fs.readFileSync(path.join(cache, current, 'payload.bin')).length, 7, 'status never writes')
+  })
+})
+
+await test('default distribution embeds Niubash and only explicit legacy assembly describes a Bash platform package', async () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(PACKAGE_ROOT, 'package.json'), 'utf8'))
   const lock = JSON.parse(fs.readFileSync(path.join(PACKAGE_ROOT, 'package-lock.json'), 'utf8'))
-  assert.equal(manifest.optionalDependencies?.['@dsh-ops/bash-win32-x64'], '0.2.1')
-  assert.equal(lock.packages['']?.optionalDependencies?.['@dsh-ops/bash-win32-x64'], '0.2.1')
-  assert.equal(lock.packages['node_modules/@dsh-ops/bash-win32-x64']?.version, '0.2.1')
+  assert.equal(manifest.optionalDependencies?.['@dsh-ops/bash-win32-x64'], undefined)
+  assert.equal(lock.packages['']?.optionalDependencies?.['@dsh-ops/bash-win32-x64'], undefined)
   const { describePackages } = await import('../scripts/lib/build/assemble.js')
-  const packages = describePackages('win32', 'x64', 'unused')
+  assert.deepEqual(describePackages('win32', 'x64', 'unused'), [])
+  const packages = describePackages('win32', 'x64', 'unused', 'git-bash')
   assert.equal(packages.length, 1)
   assert.equal(packages[0].name, '@dsh-ops/bash-win32-x64')
-  assert.equal(packages[0].kind, 'bash')
-  assert.equal(packages[0].version, '0.2.1', 'the payload version comes from the committed pin, never the main version')
+  assert.equal(packages[0].version, '0.2.1')
 })
 
 report('shells-manager')

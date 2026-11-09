@@ -9,6 +9,15 @@ inspector, offset 0 is invalid. Unknown fields, invalid bounds and malformed des
 the request. A binary file requires a binary/document reader or `ops_inspect_local_file` with
 `view: "hex"`; text is never decoded lossily.
 
+The worker prepares at most two file reads concurrently, then renders and captures them in input
+order under the same aggregate budget. Duplicate paths remain distinct requested ranges. Each read
+keeps the existing no-follow/credential checks and 32 MiB file ceiling; at most two bounded file
+buffers are prefetched, in addition to normal JSON/capture memory. A pair may finish reading before
+the output budget stops consumption, but unreturned entries remain pending and do not become host
+read observations. A single range avoids thread setup. The existing worker deadline and cancellation
+terminate the process and all its reads; this does not promise a separately cancellable 3-second OS
+open or a universal speedup on cached local files. No second `ops_parallel_read` schema is required.
+
 ```json
 {"files":[{"path":"src/index.ts","offset":1,"limit":80},{"path":"README.md","offset":10,"limit":40}]}
 ```
@@ -21,6 +30,17 @@ paths before spawning and refuses the whole request if any are protected; the wo
 checks every path and refuses links/junctions. Read-only calls create no audit or cache files.
 Successful observations update the host read-before-edit table using versions captured before
 reading; failed and pending entries do not produce observations.
+
+The exact path component `.dsh-ops` is reserved case-insensitively on every platform, including
+absolute paths, ancestors above the session cwd, and missing create targets. Public file reads
+(including document readers, `stat`, `diff` and each `read_files` entry), writes, edits, copies,
+moves and removals reject it with `PATH_RESTRICTED`; copy/move check both source and destination.
+An explicitly requested search/replace path follows the same rule. Ordinary directory searches
+continue to exclude hidden audit entries without treating that exclusion as a coverage gap.
+Near names such as `.dsh-ops-backup` and `.dsh-ops.json` are not reserved, though normal hidden
+search exclusions still apply. This public-path restriction does not block trusted batch
+plan/run/resume, audit paging, or result/cache lifecycle APIs. It does not authenticate audit
+records against writes made outside these public file tools.
 
 `nextIndex` is the first unreturned input entry and `pending` counts remaining entries. Resume
 those files by sending the remaining slice of the original `files` array. Separately, an included
