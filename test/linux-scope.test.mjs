@@ -88,7 +88,7 @@ function stageRuntime(root, { target, bytes = Buffer.from('synthetic worker byte
 }
 
 await test('every foreign target is refused by name, naming the supported set', async () => {
-  for (const target of ['linux-arm64', 'win32-arm64', 'linux-riscv64', 'openharmony-arm64', 'darwin-riscv64']) {
+  for (const target of ['win32-arm64', 'linux-riscv64', 'openharmony-arm64', 'darwin-riscv64']) {
     const [platform, arch] = target.split('-')
     await withTempDir(`linux-scope-${target}`, async root => {
       let error = null
@@ -96,11 +96,11 @@ await test('every foreign target is refused by name, naming the supported set', 
       try { resolved = resolveWorker({}, { packageRoot: stagePackage(root), platform, arch, env: {} }) } catch (caught) { error = caught }
       assert.equal(resolved, null, `${target} resolved to ${resolved}`)
       assert.ok(error, `${target} was allowed`)
-      assert.match(error.message, /Windows x64, Linux x64 and macOS/)
+      assert.match(error.message, /Windows x64, Linux x64\/arm64 and macOS/)
       assert.ok(error.message.includes(target), `the message must name ${target}: ${error.message}`)
     })
   }
-  assert.deepEqual([...PLATFORMS], ['win32-x64', 'linux-x64', 'darwin-arm64', 'darwin-x64'])
+  assert.deepEqual([...PLATFORMS], ['win32-x64', 'linux-x64', 'linux-arm64', 'darwin-arm64', 'darwin-x64'])
   assert.equal(workerName('win32'), 'dsh-ops-worker.exe')
   assert.equal(workerName('linux'), 'dsh-ops-worker')
 })
@@ -151,7 +151,7 @@ await test('package.json, the resolver and the plugin manifest declare the same 
   assert.deepEqual(components.map(component => component.id), ['dsh-ops'])
   const merged = components[0]
   assert.equal(merged.entry, 'dsh-ops')
-  assert.deepEqual([...PLATFORMS], ['win32-x64', 'linux-x64', 'darwin-arm64', 'darwin-x64'], 'only the approved target pairs are supported')
+  assert.deepEqual([...PLATFORMS], ['win32-x64', 'linux-x64', 'linux-arm64', 'darwin-arm64', 'darwin-x64'], 'only the approved target pairs are supported')
   assert.deepEqual(manifest.os, ['win32', 'linux', 'darwin'])
   assert.deepEqual(merged.platforms, ['win32', 'linux', 'darwin'])
   assert.deepEqual(manifest.cpu, ['x64', 'arm64'])

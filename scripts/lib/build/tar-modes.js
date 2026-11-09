@@ -12,7 +12,7 @@ const npmCli = invocation.args[0] ?? process.env.npm_execpath
   ?? path.join(npm(['root', '--global']).stdout.trim(), 'npm', 'bin', 'npm-cli.js')
 if (!path.isAbsolute(npmCli) || !fs.existsSync(npmCli)) throw new Error('Cannot locate npm bundled tar library')
 export const tar = createRequire(npmCli)('tar')
-export const UNIX_WORKERS = ['linux-x64', 'darwin-arm64', 'darwin-x64']
+export const UNIX_WORKERS = ['linux-x64', 'linux-arm64', 'darwin-arm64', 'darwin-x64']
   .map(platform => `package/runtime/${platform}/dsh-ops-worker`)
 const WINDOWS_WORKER = 'package/runtime/win32-x64/dsh-ops-worker.exe'
 const WORKERS = [...UNIX_WORKERS, WINDOWS_WORKER]

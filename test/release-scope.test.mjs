@@ -10,7 +10,7 @@ const hash = bytes => createHash('sha256').update(bytes).digest('hex')
 function header(target) {
   const bytes = Buffer.alloc(80)
   if (target === 'win32-x64') { bytes.write('MZ'); bytes.writeUInt32LE(64,60); bytes.writeUInt32LE(0x4550,64); bytes.writeUInt16LE(0x8664,68) }
-  if (target === 'linux-x64') { Buffer.from([127,69,76,70,2,1]).copy(bytes); bytes.writeUInt16LE(62,18) }
+  if (target === 'linux-x64' || target === 'linux-arm64') { Buffer.from([127,69,76,70,2,1]).copy(bytes); bytes.writeUInt16LE(target === 'linux-x64' ? 62 : 183,18) }
   if (target === 'darwin-arm64' || target === 'darwin-x64') { bytes.writeUInt32LE(0xfeedfacf,0); bytes.writeUInt32LE(target.endsWith('x64') ? 0x1000007 : 0x100000c,4) }
   return bytes
 }
@@ -61,10 +61,10 @@ await test('an Intel-only staged closure validates its Mach-O worker and receipt
 }))
 await test('each missing target fails strict release while staged source checks remain local',async()=>withTempDir('release-missing',root=>{
   fixture(root,['linux-x64']); assert.equal(run(root,'native-runtime.mjs',['--staged']).status,0)
-  const result=run(root); assert.notEqual(result.status,0); assert.match(result.out,/missing win32-x64, darwin-arm64, darwin-x64/)
+  const result=run(root); assert.notEqual(result.status,0); assert.match(result.out,/missing win32-x64, linux-arm64, darwin-arm64, darwin-x64/)
 }))
 await test('every foreign target is rejected',async()=>withTempDir('release-foreign',root=>{
-  fixture(root); for(const target of ['win32-arm64','linux-arm64','darwin-riscv64']) {
+  fixture(root); for(const target of ['win32-arm64','darwin-riscv64']) {
     const result=run(root,'native-runtime.mjs',['--platform',target]); assert.notEqual(result.status,0); assert.match(result.out,/Unsupported target/)
   }
 }))
