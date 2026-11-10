@@ -33,14 +33,18 @@ DSH 会话 → dsh-tools 注册表 → dsh-sandbox-policy → dsh-ops 桥
 
 ## 版本与部署策略（双轨）
 
-| 轨道 | 版本 | 用途 |
-|---|---|---|
-| 仓库源码 | **v0.5.2** + arm64 补丁 | 技术储备、可复现构建、向上游提交能力 |
-| 目标机部署 | **dsh-ops 0.4.4** + arm64 补丁 | 与 DSH 0.2.1-rc.5 兼容，不动现有 profile |
+| 组件 | 版本 |
+|---|---|
+| 仓库源码 | 上游 **v0.5.2** + arm64 补丁 |
+| 目标机 DSH | **0.2.2-rc.1**（v0.5.2 要求的最低版本） |
+| 目标机 dsh-ops | **0.5.2** + arm64 补丁 |
+| worker | `aarch64-unknown-linux-musl`，由 v0.5.2 源码构建 |
 
 v0.5.2 的 README 明确要求宿主 DSH **≥ 0.2.2-rc.1**（新的 adapter 接口），
-而 0.4.4 兼容 0.2.1-rc.x。因此 `scripts/install.sh` **按文件内容自动识别**
-三种结构（0.4.1 / 0.4.2–0.4.4 / 0.5.x），对任一版本都能正确放开准入。
+因此目标机把 DSH 从 0.2.1-rc.5 升级后再部署插件，三者版本保持一致。
+
+`scripts/install.sh` 仍**按文件内容自动识别**三种结构
+（0.4.1 / 0.4.2–0.4.4 / 0.5.x），所以旧版环境也能用同一脚本打补丁。
 
 上游 0.5.x 的重构要点（会影响补丁位置）：
 
@@ -56,7 +60,7 @@ v0.5.2 的 README 明确要求宿主 DSH **≥ 0.2.2-rc.1**（新的 adapter 接
 |---|---|
 | 源码对齐 | 上游 v0.5.2（1060 文件），补丁重新定位到 `src/execution/` |
 | 可编译目标 | 5 个：`win32-x64`、`linux-x64`、`linux-arm64`、`darwin-arm64`、`darwin-x64` |
-| 目标机 | DSH 0.2.1-rc.5 + dsh-ops 0.4.4，PRoot aarch64 实测 |
+| 目标机 | DSH 0.2.2-rc.1 + dsh-ops 0.5.2，PRoot aarch64 实测 |
 | 逐项验收 | 19 / 19 通过（v0.4.1 基线，见 [docs/VERIFICATION.md](docs/VERIFICATION.md)） |
 | `ops_bash` | 无回归 |
 
@@ -67,7 +71,7 @@ v0.5.2 的 README 明确要求宿主 DSH **≥ 0.2.2-rc.1**（新的 adapter 接
 ```
 prebuilt/linux-arm64/
   dsh-ops-worker
-  provenance.json     sha256 bf30ef79…cbb9ef
+  provenance.json     sha256 88a1417c…e3
 ```
 
 ```bash

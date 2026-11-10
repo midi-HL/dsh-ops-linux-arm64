@@ -1,5 +1,10 @@
 # 验证记录
 
+> **本文第 1–8 节是 2026-10-27 基于上游 v0.4.1 的历史验收，保留作为证据链。**
+> **当前版本（上游 v0.5.2 / DSH 0.2.2-rc.1）的实测结果见第 9 节。**
+> 两版的二进制不同：v0.4.1 用 gnu 动态链接（sha256 `bf30ef79…cbb9ef`），
+> v0.5.2 用 musl 静态链接（sha256 `88a1417c…e3`）。
+
 全部数据来自 2026-10-27 的实机测试。
 
 - 目标机：未 root 的 Android 手机 + Termux + PRoot Debian trixie
@@ -178,7 +183,10 @@ bash-run        -> exitCode 0, stdout "aarch64\n2\n"
    完全一致**（`3b781969c9f5a8e814a736702a223178999969821c0cd449613185ff698c5ec0`）——
    说明这个补丁**没有改变原项目在已有平台上的产出**，一个字节都没动。
 
-## 8. 复现方法
+## 8. 复现方法（历史 v0.4.1，当前版本请用第 9 节）
+
+> 下面这组哈希属于已不再随仓库分发的 v0.4.1 产物。当前版本请跳到
+> [第 9 节的可复现命令](#可复现命令)。
 
 ```bash
 gh workflow run build-all-targets.yml
@@ -186,6 +194,118 @@ gh run download <run-id> -n native-linux-arm64 -D ./out
 sha256sum ./out/dsh-ops-worker
 # 期望 bf30ef79b5b921a659c0f04d7b54a0344ed2268dd1a1a9a5faea284042cbb9ef
 
+./scripts/install.sh --artifact-dir ./out
+cd ~/.dsh/profiles/web/node_modules/dsh-ops && node bin/dsh-ops.mjs ladder
+```
+
+## 9. 当前版本验收（2026-11-09，v0.5.2 + DSH 0.2.2-rc.1）
+
+### 环境
+
+同一台未 root 的 Android 手机 + Termux + PRoot Debian：
+
+```
+CapEff:  0000000000000000        Seccomp: 2
+Linux localhost 4.9.227-perf+ aarch64 GNU/Linux
+uid=0(root)（PRoot 伪造）      /proc/1 不可访问
+无 pid / user / ipc namespace
+```
+
+### 版本一致性
+
+| 组件 | 版本 |
+|---|---|
+| DSH | `0.2.2-rc.1`（v0.5.2 要求 ≥ 此版本） |
+| dsh-ops | `0.5.2` |
+| worker | `0.5.2`，`aarch64-unknown-linux-musl`，静态链接 |
+| worker sha256 | `88a1417cd97e49b144b0bdecae564380d96b29e80c25900265887dc22932aae3` |
+| worker 大小 | 3,584,376 bytes |
+
+`dsh-ops ladder` 输出：
+
+```
+Native worker (file tools)
+  executable: /root/.dsh/profiles/web/node_modules/dsh-ops/runtime/linux-arm64/dsh-ops-worker
+  source:     packaged runtime
+...
+  bash  available: yes  executable: /usr/bin/bash
+$ runtime/linux-arm64/dsh-ops-worker --version
+dsh-ops-worker 0.5.2
+```
+
+`dsh-web.sh` 启动成功并打印带 token 的链接；`curl 127.0.0.1:3080` 返回 401（需 token，正常）。
+`http://127.0.0.1:8788/` 返回 200，全程未被关闭。
+
+### 五个目标同时编译（run `42617401138`）
+
+5 个 job 全部 success：
+
+| 目标 | triple | 大小 | sha256（前 16 位） |
+|---|---|---|---|
+| `win32-x64` | `x86_64-pc-windows-msvc` | 4,059,136 | `45bdfd63ee0f82b6` |
+| `linux-x64` | `x86_64-unknown-linux-musl` | 5,690,896 | `47e42c028de2499b` |
+| `linux-arm64` | `aarch64-unknown-linux-musl` | 3,584,376 | `88a1417cd97e49b1` |
+| `darwin-arm64` | `aarch64-apple-darwin` | 4,618,720 | `0acd73b55043de6a` |
+| `darwin-x64` | `x86_64-apple-darwin` | 4,839,264 | `0ccefbd9fb8fbb81` |
+
+arm64 产物 ELF 校验：`ELF64 / little-endian / e_machine=183 (AArch64)`，无 `GLIBC_` 符号。
+
+### 真实 worker 逐项调用（13/13）
+
+请求由插件自己的 `workerEnvelope()` 构造，经 stdin 送入 aarch64 原生 worker 进程，
+解析其 stdout 的版本化 envelope。脚本 `/root/final-verify.mjs`。
+
+| 用例 | 结果 |
+|---|---|
+| `stat` | completed，返回 revision |
+| `read_files` | completed |
+| `grep` | completed，命中 `hello aarch64` |
+| `glob` | completed，匹配 `*.txt` |
+| `read_table` | completed，CSV `columns=["name","age"]` 2 行 |
+| `inspect_local_file` | completed |
+| `diff` | completed |
+| `write_file` | completed，创建 `out.txt` |
+| `edit_file` | completed，`arm64` → `AARCH64` |
+| `copy` | completed，保留元数据 |
+| `move` | completed |
+| `remove` | completed |
+| 覆盖已存在目标 | `REVISION_CONFLICT`（正确拒绝，no clobber） |
+
+```
+SUMMARY {"pass":13,"total":13,"failed":[]}
+```
+
+### 文档解析
+
+| 用例 | 结果 |
+|---|---|
+| `read_docx` | completed，读出 `ARM64-DOCX-MARKER` |
+| `read_pdf` | completed，读出 `ARM64-PDF-MARKER` |
+
+### PTC batch
+
+| 用例 | 结果 |
+|---|---|
+| `batch action=plan` | `status: planned`，`done:0`，返回 `detailsRef` |
+| `batch action=run`（两个不同源） | `status: completed`，`done:2 failed:0` |
+| 落盘校验 | `b2.txt` / `b3.txt` sha256 与源文件完全一致 |
+| 两个 copy 共用同一源 | `PATH_RESTRICTED`（重叠路径保护，预期拒绝） |
+
+### 已知限制
+
+| 项 | 说明 |
+|---|---|
+| `dsh-api-terminal-controller@0.2.1-rc.5` | DSH 0.2.2-rc.1 主动禁用了这个未升级的插件，日志有明确警告。属宿主版本保护，与本补丁无关；可用 `dsh plugin allow-version` 显式豁免 |
+| 真实 LLM 端到端 | 未测（需要 API key 与转发端）。所有工具调用均在真实 worker 进程上完成，未经过 LLM 编排 |
+| 旧 `acceptance-run.mjs` | 依赖 DSH 0.2.1 的 `Tools.mode: 'native'` schema，在 0.2.2 上失效。已改用直接 envelope 调用验证，不影响插件本身 |
+
+### 可复现命令
+
+```bash
+gh workflow run build-all-targets.yml --repo midi-HL/dsh-ops-linux-arm64 --ref main
+gh run download <run-id> -n native-linux-arm64 -D ./out
+sha256sum ./out/dsh-ops-worker
+# 88a1417cd97e49b144b0bdecae564380d96b29e80c25900265887dc22932aae3
 ./scripts/install.sh --artifact-dir ./out
 cd ~/.dsh/profiles/web/node_modules/dsh-ops && node bin/dsh-ops.mjs ladder
 ```

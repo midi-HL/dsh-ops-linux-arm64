@@ -31,10 +31,11 @@ name: Release
 # attestation is produced: the recorded repository convention is the receipts plus the
 # checksum manifest (docs/PROVENANCE.md), not a second, unmaintained mechanism.
 #
-# SCOPE: exactly the four declared targets in lib/ptc/runtime.js — win32-x64,
-# linux-x64, darwin-arm64 and darwin-x64. Windows arm64 and Linux arm64 are outside the
-# matrix; `bin/native-runtime.mjs` refuses them, and `bin/check-release.mjs` fails the
-# run if any other target appears under `runtime/`.
+# SCOPE: exactly the five declared targets in lib/execution/runtime.js — win32-x64,
+# linux-x64, linux-arm64, darwin-arm64 and darwin-x64. Windows arm64 is outside the
+# matrix; `bin/native-runtime.mjs` refuses it, and `bin/check-release.mjs` fails the
+# run if any other target appears under `runtime/`. The linux-arm64 leg is a local
+# addition built with cargo-zigbuild; see .github/workflows/build-all-targets.yml.
 on:
   push:
     tags:
@@ -288,7 +289,7 @@ jobs:
         # runs: it stages the frozen Niubash archive (so the payload suites really run instead of
         # skipping), sets DSH_OPS_REQUIRE_RUNTIME=1 and refuses a skip outside this platform's
         # allowed set, re-checks the suite inventory and validates the packed artifact.
-        # `check-release.mjs` then demands all four declared targets, matches every receipt hash
+        # `check-release.mjs` then demands all five declared targets, matches every receipt hash
         # against the staged bytes and re-checks the Windows IPC binary and source digests. A
         # partial download, a foreign-architecture binary, a stale receipt or a manifest/target
         # disagreement fails here instead of shipping.

@@ -17,13 +17,13 @@ MIT AND Apache-2.0
 
 | 内容 | 来源 | 许可 |
 |---|---|---|
-| 上游 0.4.1 源码（`src/`、`native/`、`bin/`、`scripts/`、`test/`、`docs/` 等） | 上游 | MIT（原样保留） |
+| 上游 v0.5.2 源码（`src/`、`native/`、`bin/`、`scripts/`、`test/`、`docs/` 等） | 上游 | MIT（原样保留） |
 | 上游 `LICENSE`、`NOTICE`、`licenses/` | 上游 | 原样保留，未修改 |
 | 本项目新增的补丁（4 处常量 + 断言） | 本项目 | MIT |
 | 本项目新增的 workflow、安装脚本、文档 | 本项目 | MIT |
 | `prebuilt/linux-arm64/dsh-ops-worker` | 由上游源码交叉编译 | MIT（编译产物） |
 
-**本仓库不包含 FastCtx 的任何源码或二进制。** 上游 0.4.1 已把 FastCtx 从分发中移除，
+**本仓库不包含 FastCtx 的任何源码或二进制。** 上游 v0.5.2 已把 FastCtx 从分发中移除，
 只保留许可文本在 `licenses/fastctx/`；本仓库原样保留那个目录以满足 Apache-2.0 的
 通知义务，但不使用其内容。
 
@@ -48,9 +48,9 @@ MIT 只有一条实质要求：
 MIT 要求你同时提供版权声明与许可文本。最低限度：
 
 ```
-本二进制编译自 dsh-ops 0.4.1（MIT AND Apache-2.0）
+本二进制编译自 dsh-ops 0.5.2（MIT AND Apache-2.0）
 Copyright (c) 2026 T-Auto and the dsh-ops contributors
-许可全文见 https://github.com/T-Auto/dsh-ops/blob/v0.4.1/LICENSE
+许可全文见 https://github.com/T-Auto/dsh-ops/blob/v0.5.2/LICENSE
 ```
 
 ## 本项目自己的部分

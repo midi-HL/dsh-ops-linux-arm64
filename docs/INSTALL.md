@@ -15,7 +15,7 @@
 本项目**不发布到 npm**。它是 dsh-ops 的一个平台补丁，需要先有上游包：
 
 ```bash
-dsh plugin --profile web add dsh-ops@0.4.1
+dsh plugin --profile web add dsh-ops@0.5.2
 ```
 
 或者如果你的 profile 里已经有了（检查一下）：
@@ -37,8 +37,8 @@ ls ~/.dsh/profiles/web/node_modules/dsh-ops/package.json
 
 ```
 prebuilt/linux-arm64/
-  dsh-ops-worker      3,569,560 bytes
-  provenance.json     sha256 bf30ef79b5b921a659c0f04d7b54a0344ed2268dd1a1a9a5faea284042cbb9ef
+  dsh-ops-worker      3,584,376 bytes
+  provenance.json     sha256 88a1417cd97e49b144b0bdecae564380d96b29e80c25900265887dc22932aae3
 ```
 
 把整个仓库拷到目标机，然后：
@@ -99,12 +99,12 @@ cd $P && node bin/dsh-ops.mjs ladder
 ### B1. 用 GitHub Actions（不用本机工具链）
 
 ```bash
-gh workflow run build-all-targets.yml    # 一次编译全部 4 个目标
+gh workflow run build-all-targets.yml    # 一次编译全部 5 个目标
 gh run download <run-id> -n native-linux-arm64 -D ./out
 ./scripts/install.sh --artifact-dir ./out
 ```
 
-`build-all-targets.yml` 会同时编译 `win32-x64`、`linux-x64`、`linux-arm64`、`darwin-arm64`。
+`build-all-targets.yml` 会同时编译 `win32-x64`、`linux-x64`、`linux-arm64`、`darwin-arm64`、`darwin-x64`。
 每个目标的 sha256 写在 run summary 里。
 
 ### B2. 本机交叉编译（Linux x64 上）
@@ -112,12 +112,12 @@ gh run download <run-id> -n native-linux-arm64 -D ./out
 ```bash
 python3 -m pip install ziglang==0.13.0 cargo-zigbuild==0.19.7
 rustup toolchain install 1.97.1 && rustup default 1.97.1
-rustup target add aarch64-unknown-linux-gnu
+rustup target add aarch64-unknown-linux-musl
 
 npm ci --ignore-scripts
 npm run build
-cargo zigbuild --release --locked --manifest-path native/Cargo.toml --target aarch64-unknown-linux-gnu
-node bin/native-runtime.mjs stage --platform linux-arm64 --input native/target/aarch64-unknown-linux-gnu/release
+cargo zigbuild --release --locked --manifest-path native/Cargo.toml --target aarch64-unknown-linux-musl
+node bin/native-runtime.mjs stage --platform linux-arm64 --input native/target/aarch64-unknown-linux-musl/release
 node bin/native-runtime.mjs check --platform linux-arm64
 ```
 
@@ -126,7 +126,7 @@ node bin/native-runtime.mjs check --platform linux-arm64
 ### B3. 在 aarch64 机器上原生编译
 
 ```bash
-rustup target add aarch64-unknown-linux-gnu    # 就是宿主架构
+rustup target add aarch64-unknown-linux-musl    # v0.5.2 用 musl 静态链接
 cargo build --release --locked --manifest-path native/Cargo.toml
 node bin/native-runtime.mjs stage --platform linux-arm64 --input native/target/release
 ```

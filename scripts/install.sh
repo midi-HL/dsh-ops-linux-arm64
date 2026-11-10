@@ -121,13 +121,17 @@ platform_news = [
     "Object.freeze(['win32-x64', 'linux-x64', 'linux-arm64', 'darwin-arm64'])",
     "Object.freeze(['win32-x64', 'linux-x64', 'linux-arm64', 'darwin-arm64', 'darwin-x64'])",
 ]
-ok = False
-for old, new in zip(platform_olds, platform_news):
-    if patch(runtime_rel, old, new, 1):
-        ok = True
-        break
-if not ok:
-    raise SystemExit(f'{runtime_rel}: PLATFORMS literal not recognised. Upstream changed it; update scripts/install.sh.')
+runtime_text = io.open(f'{plugin}/{runtime_rel}', encoding='utf-8').read()
+if "'linux-arm64'" in runtime_text:
+    print(f'  {runtime_rel}: linux-arm64 already present')
+else:
+    ok = False
+    for old, new in zip(platform_olds, platform_news):
+        if patch(runtime_rel, old, new, 1):
+            ok = True
+            break
+    if not ok:
+        raise SystemExit(f'{runtime_rel}: PLATFORMS literal not recognised. Upstream changed it; update scripts/install.sh.')
 
 # Error text is informational only; update whichever variant is present.
 patch(runtime_rel,
