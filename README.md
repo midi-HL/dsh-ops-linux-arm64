@@ -1,3 +1,7 @@
+> **本仓库是 [dsh-ops](https://github.com/T-Auto/dsh-ops) 上游 v0.5.2 的 Linux ARM64 适配分支。**
+> 完整差异与说明见 [README.arm64.md](README.arm64.md)、[docs/UPSTREAM.md](docs/UPSTREAM.md)。
+> 纯净上游基线是 tag `upstream-v0.5.2`；下方内容保持上游原文，不代表本仓库新增支持矩阵。
+
 <p align="center">
   <img src="docs/assets/readme/dsh-ops-header.svg" alt="dsh-ops 表头" width="640">
 </p>

@@ -70,6 +70,11 @@ cd dsh-ops-linux-arm64
 
 ### 手动安装（不想跑脚本）
 
+> v0.5.2 的权威入口是 `lib/execution/runtime.js`（`lib/ptc/runtime.js` 仅是转发层），
+> `dsh-plugin.json` 是单个多行 `targets` 声明。**推荐用 `./scripts/install.sh`**，
+> 它会按实际文件内容自动识别 0.4.1 / 0.4.2–0.4.4 / 0.5.x 三种结构并先做备份。
+> 下面的命令只适用于 v0.5.2：
+
 ```bash
 P=~/.dsh/profiles/web/node_modules/dsh-ops
 
@@ -78,19 +83,38 @@ mkdir -p $P/runtime/linux-arm64
 install -m 0755 prebuilt/linux-arm64/dsh-ops-worker $P/runtime/linux-arm64/dsh-ops-worker
 cp prebuilt/linux-arm64/provenance.json $P/runtime/linux-arm64/provenance.json
 
-# 2. 打开准入（三处）
-sed -i "s/Object.freeze(\['win32-x64', 'linux-x64', 'darwin-arm64'\])/Object.freeze(['win32-x64', 'linux-x64', 'linux-arm64', 'darwin-arm64'])/" \
-  $P/lib/ptc/runtime.js
-sed -i "s/win32: \['x64'\], linux: \['x64'\]/win32: ['x64'], linux: ['x64', 'arm64']/" \
-  $P/lib/profile-install.js
-sed -i 's/"targets": \["win32-x64", "linux-x64", "darwin-arm64"\]/"targets": ["win32-x64", "linux-x64", "linux-arm64", "darwin-arm64"]/g' \
-  $P/dsh-plugin.json
+# 2. 打开三处准入（v0.5.2）
+python3 - "$P" <<'PY'
+import io, sys
+p = sys.argv[1]
+def sub(rel, old, new):
+    f = f'{p}/{rel}'
+    t = io.open(f, encoding='utf-8').read()
+    assert t.count(old) == 1, f'{rel}: unexpected literal'
+    io.open(f, 'w', encoding='utf-8', newline='').write(t.replace(old, new))
+sub('lib/execution/runtime.js',
+    "Object.freeze(['win32-x64', 'linux-x64', 'darwin-arm64', 'darwin-x64'])",
+    "Object.freeze(['win32-x64', 'linux-x64', 'linux-arm64', 'darwin-arm64', 'darwin-x64'])")
+sub('lib/profile-install.js',
+    "Object.freeze({ win32: ['x64'], linux: ['x64'], darwin: ['arm64', 'x64'] })",
+    "Object.freeze({ win32: ['x64'], linux: ['x64', 'arm64'], darwin: ['arm64', 'x64'] })")
+sub('dsh-plugin.json', '''"targets": [
+          "win32-x64",
+          "linux-x64",
+          "darwin-arm64",
+          "darwin-x64"
+        ]''', '''"targets": [
+          "win32-x64",
+          "linux-x64",
+          "linux-arm64",
+          "darwin-arm64",
+          "darwin-x64"
+        ]''')
+PY
 
 # 3. 验证
 cd $P && node bin/dsh-ops.mjs ladder
 ```
-
-`sed -i` 在部分环境需要备份后缀（macOS 用 `sed -i ''`）。用脚本更稳。
 
 ---
 
@@ -197,7 +221,7 @@ cp -a "$backup/dsh-ops-pkg" ~/.dsh/profiles/web/node_modules/dsh-ops
 第 2 步的准入没改成功。检查：
 
 ```bash
-grep -n "linux-arm64" ~/.dsh/profiles/web/node_modules/dsh-ops/lib/ptc/runtime.js
+grep -n "linux-arm64" ~/.dsh/profiles/web/node_modules/dsh-ops/lib/execution/runtime.js
 ```
 
 应该看到 `PLATFORMS` 那行含 `linux-arm64`。

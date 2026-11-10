@@ -10,6 +10,18 @@
 > 上游从 v0.4.1 到 v0.5.2 从未把 Linux ARM64 纳入支持矩阵 —— 见
 > [docs/UPSTREAM.md](docs/UPSTREAM.md) 的完整兼容性说明。
 
+## 来源、改动与适配目标（速览）
+
+| 问题 | 说明 |
+|---|---|
+| 基于上游哪一部分 | `T-Auto/dsh-ops` 的 **v0.5.2** 完整源码（本仓库 tag `upstream-v0.5.2`，1060 个文件）。未改 Rust 实现，只改平台准入与构建/校验声明 |
+| 具体做了什么 | 在 `src/execution/runtime.ts`、`src/profile-install.ts`、`dsh-plugin.json`、manifest 校验、打包权限和两个测试中补上 `linux-arm64`；新增 5 目标构建 workflow、版本自适应安装脚本、预编译 aarch64 worker + provenance |
+| 为适配什么 | 让 dsh-ops 的原生文件工具与 PTC 能力在 **Linux ARM64 / aarch64**（未 root Android + Termux + PRoot Debian）上真正可用；需搭配 DSH **0.2.2-rc.1** 与 dsh-ops **0.5.2** |
+| 推送状态 | GitHub `main` 已包含 v0.5.2 源码、补丁、产物和验收文档；完整差异用 `git diff upstream-v0.5.2..main` 查看 |
+
+完整改动面见下文「改动面」与 [docs/UPSTREAM.md](docs/UPSTREAM.md)；
+安装、回滚、验收见 [docs/INSTALL.md](docs/INSTALL.md)、[docs/VERIFICATION.md](docs/VERIFICATION.md)。
+
 ---
 
 ## 它解决什么
@@ -61,7 +73,8 @@ v0.5.2 的 README 明确要求宿主 DSH **≥ 0.2.2-rc.1**（新的 adapter 接
 | 源码对齐 | 上游 v0.5.2（1060 文件），补丁重新定位到 `src/execution/` |
 | 可编译目标 | 5 个：`win32-x64`、`linux-x64`、`linux-arm64`、`darwin-arm64`、`darwin-x64` |
 | 目标机 | DSH 0.2.2-rc.1 + dsh-ops 0.5.2，PRoot aarch64 实测 |
-| 逐项验收 | 19 / 19 通过（v0.4.1 基线，见 [docs/VERIFICATION.md](docs/VERIFICATION.md)） |
+| 逐项验收 | **v0.5.2：13/13 真实 worker 调用通过**，另有 docx/pdf 与 PTC batch；v0.4.1 的 19/19 是历史基线，见 [docs/VERIFICATION.md](docs/VERIFICATION.md) |
+| 五目标构建 | run `42617401138` 全绿；arm64 worker sha256 `88a1417c…e3` |
 | `ops_bash` | 无回归 |
 
 ## 安装
@@ -121,7 +134,7 @@ Windows DACL）。依赖树全部纯 Rust，没有需要交叉编译 C 代码的
 DSH 本体 —— **全部未改**。
 
 ```bash
-git diff v0.5.2..HEAD     # 完整差异
+git diff upstream-v0.5.2..main     # 完整差异
 ```
 
 ## 上游兼容性

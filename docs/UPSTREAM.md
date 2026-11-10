@@ -205,7 +205,7 @@ gh run download <run-id> -n native-linux-arm64 -D ./out
 本仓库**完整包含**上游 v0.5.2 源码（1060 个文件），并直接在其上应用了补丁。所以：
 
 - `git log` 能看到补丁提交
-- `git diff v0.5.2..HEAD` 就是全部改动
+- `git diff upstream-v0.5.2..main` 就是全部改动
 - 可以直接 `npm run build` / `cargo build` / `npm test`
 - 不需要额外 clone 上游
 
